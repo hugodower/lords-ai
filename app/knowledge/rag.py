@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Optional
 
 from app.config import settings
@@ -105,6 +106,68 @@ async def search_knowledge(
     except Exception as e:
         log.warning("RAG search failed: %s", e)
         return []
+
+
+async def save_conversation(
+    org_id: str,
+    conversation_id: str,
+    history: list[dict],
+    contact_name: str = "",
+    outcome: str = "handoff",
+) -> int:
+    """Save a completed conversation to ChromaDB as training data for RAG.
+
+    Each conversation is stored as a single document with all messages,
+    so future RAG searches can find similar past interactions.
+    Returns the number of chunks indexed (0 if failed).
+    """
+    if not history or len(history) < 2:
+        log.info("Skipping RAG save — conversation too short (%d msgs)", len(history))
+        return 0
+
+    try:
+        client = get_chroma()
+    except Exception as e:
+        log.warning("ChromaDB unavailable, skipping conversation save: %s", e)
+        return 0
+
+    # Build a readable conversation text
+    lines = []
+    for msg in history:
+        role = "Lead" if msg.get("role") == "user" else "Atendente"
+        lines.append(f"{role}: {msg.get('content', '')}")
+
+    conversation_text = "\n".join(lines)
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    doc_name = f"conv_{conversation_id}_{now}"
+
+    collection = client.get_or_create_collection(name=_collection_name(org_id))
+
+    chunks = chunk_text(conversation_text)
+    if not chunks:
+        return 0
+
+    ids = [f"{doc_name}_{i}" for i in range(len(chunks))]
+    metadatas = [
+        {
+            "source": "conversation",
+            "org_id": org_id,
+            "conversation_id": conversation_id,
+            "contact_name": contact_name or "unknown",
+            "outcome": outcome,
+            "date": now,
+            "chunk": i,
+        }
+        for i in range(len(chunks))
+    ]
+
+    collection.upsert(ids=ids, documents=chunks, metadatas=metadatas)
+
+    log.info(
+        "Saved conversation to RAG: conv=%s org=%s chunks=%d outcome=%s",
+        conversation_id, org_id, len(chunks), outcome,
+    )
+    return len(chunks)
 
 
 async def delete_collection(org_id: str) -> None:

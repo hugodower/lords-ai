@@ -312,6 +312,11 @@ class BaseAgent(ABC):
         if action == "schedule" and output.schedule:
             from app.skills.schedule import execute_scheduling
 
+            log.info(
+                "[SCHEDULE] Attempting: conv=%s date=%s time=%s contact=%s",
+                conversation_id, output.schedule.requested_date,
+                output.schedule.requested_time, contact_name,
+            )
             sched_result = await execute_scheduling(
                 org_id=org_id,
                 contact_name=contact_name,
@@ -320,15 +325,26 @@ class BaseAgent(ABC):
                 requested_time=output.schedule.requested_time,
             )
             if sched_result.get("success"):
-                # Replace agent message with confirmation
+                # Replace agent message with real confirmation
                 output.text = sched_result["confirmation_message"]
                 action = "schedule"
-            else:
-                # Scheduling failed — send original text (fallback)
-                log.warning(
-                    "[SCHEDULE] Failed for conv %s: %s",
-                    conversation_id, sched_result.get("error"),
+                log.info(
+                    "[SCHEDULE] Success: conv=%s event_id=%s",
+                    conversation_id, sched_result.get("event_id"),
                 )
+            else:
+                # Scheduling FAILED — do NOT send Claude's "agendei" text
+                error_detail = sched_result.get("error", "unknown")
+                log.error(
+                    "[SCHEDULE] FAILED for conv %s: %s — replacing Claude's "
+                    "false confirmation with error message",
+                    conversation_id, error_detail,
+                )
+                output.text = (
+                    "Opa, tive um probleminha pra confirmar o horario agora. "
+                    "Vou pedir pra equipe agendar manualmente e te confirmo em breve, tudo bem?"
+                )
+                action = "continue"
 
         # Handle handoff requested by the agent
         if action == "handoff":

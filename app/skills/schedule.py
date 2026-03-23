@@ -37,8 +37,16 @@ async def get_scheduling_info(org_id: str) -> dict:
 def _build_gcal_client(config: dict, org_id: str) -> Optional[GoogleCalendarClient]:
     """Build a GoogleCalendarClient from scheduling config, if connected."""
     oauth_token = config.get("google_oauth_token")
-    if not oauth_token or not isinstance(oauth_token, dict):
+    if not oauth_token:
+        log.warning("[GCAL] No google_oauth_token in scheduling config for org %s", org_id)
         return None
+    if not isinstance(oauth_token, dict):
+        log.warning(
+            "[GCAL] google_oauth_token is %s (expected dict) for org %s",
+            type(oauth_token).__name__, org_id,
+        )
+        return None
+    log.info("[GCAL] Client built for org %s (token type=%s)", org_id, type(oauth_token).__name__)
     return GoogleCalendarClient(org_id=org_id, token_data=oauth_token)
 
 
@@ -134,9 +142,11 @@ async def create_booking(
 
     cal_client = _build_gcal_client(config, org_id)
     if not cal_client:
+        log.error("[BOOKING] Could not build Google Calendar client for org %s", org_id)
         return None
 
     calendar_id = config.get("google_calendar_id", "primary")
+    log.info("[BOOKING] Creating event on calendar '%s' for org %s", calendar_id, org_id)
     event = await cal_client.create_event(
         calendar_id=calendar_id,
         summary=summary,
@@ -160,10 +170,21 @@ async def execute_scheduling(
     requested_time: Optional[str] = None,
 ) -> dict:
     """Execute the full scheduling flow: create event + build confirmation."""
+    log.info(
+        "[SCHEDULE] execute_scheduling called: org=%s contact=%s date=%s time=%s",
+        org_id, contact_name, requested_date, requested_time,
+    )
     config = await sb.get_scheduling_config(org_id)
 
-    if not config or config.get("scheduling_type") != "google_calendar":
-        return {"success": False, "error": "Google Calendar not configured"}
+    if not config:
+        log.error("[SCHEDULE] No scheduling config found for org %s", org_id)
+        return {"success": False, "error": "Scheduling config not found"}
+    if config.get("scheduling_type") != "google_calendar":
+        log.error(
+            "[SCHEDULE] scheduling_type='%s' (expected 'google_calendar') for org %s",
+            config.get("scheduling_type"), org_id,
+        )
+        return {"success": False, "error": f"scheduling_type is '{config.get('scheduling_type')}', not 'google_calendar'"}
 
     if not requested_date or not requested_time:
         return {"success": False, "error": "Date and time required"}

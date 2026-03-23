@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.integrations.chatwoot import chatwoot_client
+from app.knowledge.rag import save_conversation
 from app.memory.redis_store import (
     get_conversation_history,
     get_conversation_metadata,
@@ -87,6 +88,18 @@ async def perform_handoff(
 
         # Add label
         await chatwoot_client.add_label(conversation_id, "handoff-ia")
+
+        # Save conversation to RAG before clearing
+        try:
+            await save_conversation(
+                org_id=org_id,
+                conversation_id=conversation_id,
+                history=history,
+                contact_name=contact_name,
+                outcome=f"handoff: {reason}",
+            )
+        except Exception as rag_err:
+            log.warning("RAG save failed (non-blocking): %s", rag_err)
 
         # Clear AI conversation state
         await clear_conversation(conversation_id)
