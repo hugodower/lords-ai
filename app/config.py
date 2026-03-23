@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
 
+    # Sandbox
+    sandbox_mode: bool = True
+    sandbox_phones: str = "+5518996597391"  # comma-separated allowed phones
+
     # Config
     log_level: str = "INFO"
     max_response_time_seconds: int = 10

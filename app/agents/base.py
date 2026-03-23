@@ -20,6 +20,7 @@ from app.models.schemas import AgentOutput, ProcessMessageResponse
 from app.skills.business_hours import is_within_business_hours, get_after_hours_response
 from app.skills.handoff import perform_handoff
 from app.utils.logger import get_logger
+from app.utils.phone import normalize_phone
 
 log = get_logger("agent:base")
 
@@ -55,6 +56,27 @@ class BaseAgent(ABC):
         if await is_paused():
             log.info("Agents paused — ignoring message")
             return ProcessMessageResponse(action="ignored", error="Agents paused")
+
+        # ── Sandbox guard ──────────────────────────────────────────
+        if settings.sandbox_mode:
+            allowed = {
+                normalize_phone(p.strip())
+                for p in settings.sandbox_phones.split(",")
+                if p.strip()
+            }
+            # Also include phones from DB agent_config
+            db_phones = agent_config.get("sandbox_phones") or []
+            for p in db_phones:
+                if p.strip():
+                    allowed.add(normalize_phone(p.strip()))
+
+            caller = normalize_phone(contact_phone) if contact_phone else ""
+            if caller not in allowed:
+                log.info(
+                    "[SANDBOX] Phone %s not in allowed list, ignoring silently",
+                    contact_phone,
+                )
+                return ProcessMessageResponse(action="ignored", error="Sandbox: phone not allowed")
 
         # ── Layer 0: Business hours ──────────────────────────────────
         if not await is_within_business_hours(org_id):
