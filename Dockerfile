@@ -10,8 +10,9 @@ WORKDIR /opt/app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Application code only
+# Application code + prompt templates
 COPY app/ app/
+COPY templates/ templates/
 
 EXPOSE 8000
 
