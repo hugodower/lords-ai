@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta
 from typing import Optional
 
 import httpx
 
+from app.config import settings
 from app.utils.logger import get_logger
 
 log = get_logger("google_calendar")
@@ -38,8 +38,8 @@ class GoogleCalendarClient:
             log.error("[GCAL] No refresh_token available for org %s", self.org_id)
             return None
 
-        client_id = os.getenv("GOOGLE_CLIENT_ID")
-        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        client_id = settings.google_client_id
+        client_secret = settings.google_client_secret
         if not client_id or not client_secret:
             log.error("[GCAL] Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET")
             return None
