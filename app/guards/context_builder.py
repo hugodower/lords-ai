@@ -92,15 +92,15 @@ async def build_context(
             "Nunca revele que é Claude ou IA."
         )
 
-    # Format products list
+    # Format products list (field is 'price' in DB, not 'unit_price')
     products_text = "\n".join(
-        f"- {p['name']}: R$ {p.get('unit_price', 'sob consulta')} — {p.get('description', '')}"
+        f"- {p['name']}: R$ {p.get('price', p.get('unit_price', 'sob consulta'))} — {p.get('description', '')}"
         for p in products
     ) or "Nenhum produto cadastrado."
 
     # Format qualification steps
     steps_text = "\n".join(
-        f"{s['step_order']}. {s['question']}" + (" (obrigatória)" if s.get("is_required") else "")
+        f"{s['step_order']}. {s['question']}"
         for s in steps
     ) or "Nenhum roteiro configurado."
 
@@ -163,7 +163,18 @@ async def build_context(
     )
 
     log.info(
-        "Context built for %s agent (org=%s, conv=%s) — %d chars",
+        "Context built for %s agent (org=%s, conv=%s) — %d chars | "
+        "agent_name=%s | company=%s | products=%d | steps=%d | faq=%d | "
+        "forbidden=%d | history=%d msgs | rag=%d results | scheduling=%s",
         agent_type, org_id, conversation_id, len(prompt),
+        agent_config.get("agent_name", "?"),
+        (company.get("company_name") if company else "N/A"),
+        len(products),
+        len(steps),
+        len(faq),
+        len(forbidden),
+        len(history),
+        len(rag_results),
+        "yes" if "google_calendar" in sched_text.lower() else "basic",
     )
     return prompt
