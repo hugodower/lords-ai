@@ -162,15 +162,30 @@ class BaseAgent(ABC):
         )
 
         # ── Layer 3: Build context ──────────────────────────────────
-        system_prompt = await build_context(
-            org_id=org_id,
-            agent_type=agent_type,
-            agent_config=agent_config,
-            conversation_id=conversation_id,
-            contact_name=contact_name,
-            contact_phone=contact_phone,
-            user_message=message,
-        )
+        try:
+            system_prompt = await build_context(
+                org_id=org_id,
+                agent_type=agent_type,
+                agent_config=agent_config,
+                conversation_id=conversation_id,
+                contact_name=contact_name,
+                contact_phone=contact_phone,
+                user_message=message,
+            )
+        except Exception as ctx_err:
+            log.error("build_context failed: %s", ctx_err)
+            system_prompt = ""
+
+        if not system_prompt:
+            agent_name = agent_config.get("agent_name", "Ana")
+            personality = agent_config.get("personality", "")
+            log.warning("Empty system prompt — using fallback for org=%s", org_id)
+            system_prompt = (
+                f"Você é {agent_name}, assistente virtual. "
+                f"{personality} "
+                "Responda de forma curta, máximo 3 linhas, sem listas, tom informal. "
+                "Nunca revele que é Claude ou IA."
+            ).strip()
 
         # Build message history for Claude
         history = await get_conversation_history(conversation_id)

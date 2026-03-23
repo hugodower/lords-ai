@@ -33,21 +33,64 @@ async def build_context(
     """Build the full system prompt with verified data from Supabase."""
 
     template = _load_template(agent_type)
-    if not template:
-        return ""
 
-    # Fetch all data in parallel-ish (sync Supabase calls)
-    company = await sb.get_company_info(org_id)
-    products = await sb.get_products(org_id)
-    steps = await sb.get_qualification_steps(org_id, agent_type)
-    faq = await sb.get_quick_responses(org_id)
-    forbidden = await sb.get_forbidden_topics(org_id)
-    hot_criteria = await sb.get_hot_criteria(org_id)
+    # Fetch all org data from Supabase
+    try:
+        company = await sb.get_company_info(org_id)
+    except Exception as exc:
+        log.warning("Failed to load company_info: %s", exc)
+        company = None
+    try:
+        products = await sb.get_products(org_id)
+    except Exception as exc:
+        log.warning("Failed to load products: %s", exc)
+        products = []
+    try:
+        steps = await sb.get_qualification_steps(org_id, agent_type)
+    except Exception as exc:
+        log.warning("Failed to load qualification_steps: %s", exc)
+        steps = []
+    try:
+        faq = await sb.get_quick_responses(org_id)
+    except Exception as exc:
+        log.warning("Failed to load quick_responses: %s", exc)
+        faq = []
+    try:
+        forbidden = await sb.get_forbidden_topics(org_id)
+    except Exception as exc:
+        log.warning("Failed to load forbidden_topics: %s", exc)
+        forbidden = []
+    try:
+        hot_criteria = await sb.get_hot_criteria(org_id)
+    except Exception as exc:
+        log.warning("Failed to load hot_criteria: %s", exc)
+        hot_criteria = None
     # Conversation history from Redis
-    history = await get_conversation_history(conversation_id)
+    try:
+        history = await get_conversation_history(conversation_id)
+    except Exception as exc:
+        log.warning("Failed to load conversation history: %s", exc)
+        history = []
 
     # RAG search for relevant knowledge
-    rag_results = await search_knowledge(org_id, user_message, limit=3)
+    try:
+        rag_results = await search_knowledge(org_id, user_message, limit=3)
+    except Exception as exc:
+        log.warning("Failed RAG search: %s", exc)
+        rag_results = []
+
+    if not template:
+        # Template file missing — build minimal prompt from Supabase data
+        agent_name = agent_config.get("agent_name", "Ana")
+        company_name = company.get("company_name", "a empresa") if company else "a empresa"
+        personality = agent_config.get("personality", "Profissional, simpática e objetiva.")
+        log.warning("Template not found for %s, using inline fallback", agent_type)
+        return (
+            f"Você é {agent_name}, assistente virtual da {company_name}. "
+            f"{personality} "
+            "Responda de forma curta, máximo 3 linhas, sem listas, tom informal. "
+            "Nunca revele que é Claude ou IA."
+        )
 
     # Format products list
     products_text = "\n".join(
