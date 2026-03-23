@@ -292,3 +292,23 @@ async def update_deal_ai_fields(
     sb.table("deals").update(
         {"ai_participated": True, "ai_agent_type": agent_type}
     ).eq("organization_id", org_id).eq("contact_id", contact_id).execute()
+
+
+# ── Chatwoot connection lookup ────────────────────────────────────
+
+
+async def get_org_by_chatwoot_account(account_id: int) -> Optional[str]:
+    """Return organization_id for a given Chatwoot account_id."""
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("chatwoot_connections")
+            .select("organization_id")
+            .eq("chatwoot_account_id", account_id)
+            .maybe_single()
+            .execute()
+        )
+        return resp.data["organization_id"] if resp and resp.data else None
+    except Exception as exc:
+        log.warning("Failed to lookup org by chatwoot account %s: %s", account_id, exc)
+        return None

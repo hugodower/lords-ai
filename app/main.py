@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, File, Query, UploadFile
+from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.config import settings
@@ -106,6 +106,96 @@ async def process_message(req: ProcessMessageRequest):
         contact_name=req.contact_name,
         message=req.message,
     )
+
+
+# ── Chatwoot webhook ─────────────────────────────────────────────────
+
+
+@app.post("/api/v1/webhook/chatwoot")
+async def chatwoot_webhook(request: Request):
+    payload = await request.json()
+
+    # Filters
+    event = payload.get("event")
+    if event != "message_created":
+        return JSONResponse({"status": "ignored", "reason": "event_not_message_created"})
+
+    message_type = payload.get("message_type")
+    if message_type != "incoming":
+        return JSONResponse({"status": "ignored", "reason": "not_incoming"})
+
+    if payload.get("private") is True:
+        return JSONResponse({"status": "ignored", "reason": "private_note"})
+
+    content = (payload.get("content") or "").strip()
+    if not content:
+        return JSONResponse({"status": "ignored", "reason": "empty_content"})
+
+    # Extract data
+    conversation = payload.get("conversation") or {}
+    sender = payload.get("sender") or {}
+    inbox = payload.get("inbox") or {}
+    account = payload.get("account") or {}
+
+    account_id = account.get("id") or payload.get("account_id")
+    conversation_id = str(conversation.get("id", ""))
+
+    contact_phone = (
+        sender.get("phone_number")
+        or (conversation.get("meta", {}).get("sender", {}).get("phone_number"))
+        or ""
+    )
+    contact_name = (
+        sender.get("name")
+        or (conversation.get("meta", {}).get("sender", {}).get("name"))
+        or ""
+    )
+    inbox_source = inbox.get("channel_type") or conversation.get("channel") or "whatsapp"
+
+    # Resolve org_id from chatwoot_account_id
+    org_id = None
+    if account_id:
+        org_id = await sb.get_org_by_chatwoot_account(int(account_id))
+
+    if not org_id:
+        # Fallback to default org
+        org_id = settings.org_id
+        log.warning(
+            "Chatwoot webhook: could not resolve org for account_id=%s, using default %s",
+            account_id, org_id,
+        )
+
+    log.info(
+        "Chatwoot webhook: org=%s conv=%s phone=%s name=%s msg=%s",
+        org_id, conversation_id, contact_phone, contact_name, content[:50],
+    )
+
+    # Determine agent and process
+    active = await sb.get_active_agents(org_id)
+    active_types = {a["agent_type"] for a in active}
+
+    agent = None
+    for agent_type in ["sdr", "support"]:
+        if agent_type in active_types and agent_type in AGENTS:
+            agent = AGENTS[agent_type]
+            break
+
+    if not agent:
+        return JSONResponse({"status": "ignored", "reason": "no_active_agent"})
+
+    result = await agent.process(
+        org_id=org_id,
+        conversation_id=conversation_id,
+        contact_phone=contact_phone,
+        contact_name=contact_name,
+        message=content,
+    )
+
+    return JSONResponse({
+        "status": "processed",
+        "action": result.action,
+        "agent_type": result.agent_type,
+    })
 
 
 # ── Knowledge base ──────────────────────────────────────────────────
