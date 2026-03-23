@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     chatwoot_url: str
     chatwoot_api_token: str
     chatwoot_account_id: int = 1
+    chatwoot_bot_agent_id: int = 0  # Chatwoot agent_bot ID to detect self-messages
 
     # Redis
     redis_url: str = "redis://localhost:6379"

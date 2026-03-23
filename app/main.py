@@ -127,13 +127,35 @@ async def chatwoot_webhook(request: Request):
     if payload.get("private") is True:
         return JSONResponse({"status": "ignored", "reason": "private_note"})
 
+    # Guard: skip if conversation has a human agent assigned
+    conversation = payload.get("conversation") or {}
+    assignee = conversation.get("assignee")
+    if assignee and assignee.get("id"):
+        agent_name = assignee.get("name") or assignee.get("email") or assignee.get("id")
+        conv_id = conversation.get("id", "?")
+        log.info(
+            "[WEBHOOK] Conversa %s tem agente humano atribuído (%s), ignorando",
+            conv_id, agent_name,
+        )
+        return JSONResponse({"status": "ignored", "reason": "human_assigned"})
+
+    # Guard: skip if message is from the bot/AI itself (avoid loop)
+    sender = payload.get("sender") or {}
+    sender_type = sender.get("type")
+    sender_id = sender.get("id")
+    bot_id = settings.chatwoot_bot_agent_id
+    if sender_type == "agent_bot" or (bot_id and sender_id == bot_id):
+        log.info(
+            "[WEBHOOK] Mensagem do próprio bot/agente (sender.id=%s, type=%s), ignorando",
+            sender_id, sender_type,
+        )
+        return JSONResponse({"status": "ignored", "reason": "self_message"})
+
     content = (payload.get("content") or "").strip()
     if not content:
         return JSONResponse({"status": "ignored", "reason": "empty_content"})
 
     # Extract data
-    conversation = payload.get("conversation") or {}
-    sender = payload.get("sender") or {}
     inbox = payload.get("inbox") or {}
     account = payload.get("account") or {}
 
