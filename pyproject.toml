@@ -1,0 +1,9 @@
+[project]
+name = "lords-ai"
+version = "0.1.0"
+description = "LORDS AI Agents — SDR + Support agents for WhatsApp via Chatwoot"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
