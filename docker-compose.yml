@@ -2,59 +2,71 @@ version: "3.8"
 
 services:
   lords-ai:
-    build: .
-    container_name: lords-ai
+    image: ghcr.io/hugodower/lords-ai:latest
     ports:
       - "8100:8000"
-    env_file:
-      - .env
-    volumes:
-      - ./templates:/app/templates:ro
-    depends_on:
-      lords-redis:
-        condition: service_healthy
-      lords-chromadb:
-        condition: service_started
-    restart: always
-    networks:
-      - lords-network
+    environment:
+      - ORG_ID=${ORG_ID}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - CHATWOOT_URL=${CHATWOOT_URL}
+      - CHATWOOT_API_TOKEN=${CHATWOOT_API_TOKEN}
+      - CHATWOOT_ACCOUNT_ID=${CHATWOOT_ACCOUNT_ID}
+      - REDIS_URL=redis://lords-redis:6379
+      - CHROMA_URL=http://lords-chromadb:8000
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - MAX_RESPONSE_TIME_SECONDS=${MAX_RESPONSE_TIME_SECONDS:-10}
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 5
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 15s
+    networks:
+      - lords-network
 
   lords-redis:
     image: redis:7-alpine
-    container_name: lords-redis
     command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
-    restart: always
-    networks:
-      - lords-network
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
+    networks:
+      - lords-network
 
   lords-chromadb:
     image: chromadb/chroma:0.5.23
-    container_name: lords-chromadb
     volumes:
       - chroma_data:/chroma/chroma
     environment:
       - ANONYMIZED_TELEMETRY=false
-    restart: always
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
     networks:
       - lords-network
 
 volumes:
   redis_data:
   chroma_data:
-
 networks:
   lords-network:
-    driver: bridge
+    driver: overlay
