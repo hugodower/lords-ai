@@ -131,8 +131,10 @@ class GoogleCalendarClient:
                 current_date += timedelta(days=1)
                 continue
 
-            h_start, m_start = map(int, available_start_time.split(":"))
-            h_end, m_end = map(int, available_end_time.split(":"))
+            parts = available_start_time.split(":")
+            h_start, m_start = int(parts[0]), int(parts[1])
+            parts = available_end_time.split(":")
+            h_end, m_end = int(parts[0]), int(parts[1])
 
             slot_start = datetime(
                 current_date.year, current_date.month, current_date.day,
