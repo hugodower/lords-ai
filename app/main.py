@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.agents.sdr import sdr_agent
 from app.agents.support import support_agent
+from app.guards.debounce import debounce_message
 from app.integrations import supabase_client as sb
 from app.knowledge.rag import index_document, search_knowledge, ping_chroma
 from app.memory.redis_store import is_paused, ping_redis, set_paused
@@ -218,20 +219,27 @@ async def chatwoot_webhook(request: Request):
             log.warning("[WEBHOOK] Nenhum agente ativo para org=%s", org_id)
             return JSONResponse({"status": "ignored", "reason": "no_active_agent"})
 
-        log.info("[WEBHOOK] Processando com agente %s...", agent_type)
-        result = await agent.process(
-            org_id=org_id,
-            conversation_id=conversation_id,
-            contact_phone=contact_phone,
-            contact_name=contact_name,
-            message=content,
-        )
+        # Debounce: buffer messages for 4s, then process all at once
+        log.info("[WEBHOOK] Debouncing message for conv=%s agent=%s", conversation_id, agent_type)
 
-        log.info("[WEBHOOK] Resultado: action=%s agent=%s", result.action, result.agent_type)
+        async def _process_debounced(combined_message: str) -> None:
+            result = await agent.process(
+                org_id=org_id,
+                conversation_id=conversation_id,
+                contact_phone=contact_phone,
+                contact_name=contact_name,
+                message=combined_message,
+            )
+            log.info(
+                "[WEBHOOK] Debounced result: conv=%s action=%s agent=%s",
+                conversation_id, result.action, result.agent_type,
+            )
+
+        await debounce_message(conversation_id, content, _process_debounced)
+
         return JSONResponse({
-            "status": "processed",
-            "action": result.action,
-            "agent_type": result.agent_type,
+            "status": "debounced",
+            "conversation_id": conversation_id,
         })
 
     except Exception as exc:

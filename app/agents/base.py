@@ -18,6 +18,7 @@ from app.memory.redis_store import add_message, get_conversation_history, is_pau
 from app.memory.history import log_interaction
 from app.models.schemas import AgentOutput, ProcessMessageResponse
 from app.skills.business_hours import is_within_business_hours, get_after_hours_response
+from app.guards.debounce import is_duplicate_response
 from app.skills.handoff import perform_handoff
 from app.utils.logger import get_logger
 from app.utils.phone import normalize_phone
@@ -345,6 +346,11 @@ class BaseAgent(ABC):
                     "Vou pedir pra equipe agendar manualmente e te confirmo em breve, tudo bem?"
                 )
                 action = "continue"
+
+        # Dedup check (skip for handoff — those are critical)
+        if action != "handoff" and await is_duplicate_response(conversation_id, output.text):
+            log.warning("[DEDUP] Duplicate response skipped for conv %s", conversation_id)
+            return ProcessMessageResponse(action="ignored", error="Duplicate response")
 
         # Handle handoff requested by the agent
         if action == "handoff":
