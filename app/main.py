@@ -113,7 +113,11 @@ async def process_message(req: ProcessMessageRequest):
 
 @app.post("/api/v1/webhook/chatwoot")
 async def chatwoot_webhook(request: Request):
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        log.error("[WEBHOOK] Failed to parse JSON body: %s", exc)
+        return JSONResponse({"status": "error", "reason": "invalid_json", "detail": str(exc)})
 
     # Filters
     event = payload.get("event")
@@ -155,69 +159,89 @@ async def chatwoot_webhook(request: Request):
     if not content:
         return JSONResponse({"status": "ignored", "reason": "empty_content"})
 
-    # Extract data
-    inbox = payload.get("inbox") or {}
-    account = payload.get("account") or {}
+    try:
+        # Extract data
+        log.info("[WEBHOOK] Extraindo dados do payload...")
+        inbox = payload.get("inbox") or {}
+        account = payload.get("account") or {}
 
-    account_id = account.get("id") or payload.get("account_id")
-    conversation_id = str(conversation.get("id", ""))
+        account_id = account.get("id") or payload.get("account_id")
+        conversation_id = str(conversation.get("id", ""))
 
-    contact_phone = (
-        sender.get("phone_number")
-        or (conversation.get("meta", {}).get("sender", {}).get("phone_number"))
-        or ""
-    )
-    contact_name = (
-        sender.get("name")
-        or (conversation.get("meta", {}).get("sender", {}).get("name"))
-        or ""
-    )
-    inbox_source = inbox.get("channel_type") or conversation.get("channel") or "whatsapp"
-
-    # Resolve org_id from chatwoot_account_id
-    org_id = None
-    if account_id:
-        org_id = await sb.get_org_by_chatwoot_account(int(account_id))
-
-    if not org_id:
-        # Fallback to default org
-        org_id = settings.org_id
-        log.warning(
-            "Chatwoot webhook: could not resolve org for account_id=%s, using default %s",
-            account_id, org_id,
+        contact_phone = (
+            sender.get("phone_number")
+            or (conversation.get("meta", {}).get("sender", {}).get("phone_number"))
+            or ""
+        )
+        contact_name = (
+            sender.get("name")
+            or (conversation.get("meta", {}).get("sender", {}).get("name"))
+            or ""
         )
 
-    log.info(
-        "Chatwoot webhook: org=%s conv=%s phone=%s name=%s msg=%s",
-        org_id, conversation_id, contact_phone, contact_name, content[:50],
-    )
+        log.info(
+            "[WEBHOOK] Dados extraídos: account_id=%s conv=%s phone=%s name=%s",
+            account_id, conversation_id, contact_phone, contact_name,
+        )
 
-    # Determine agent and process
-    active = await sb.get_active_agents(org_id)
-    active_types = {a["agent_type"] for a in active}
+        # Resolve org_id from chatwoot_account_id
+        log.info("[WEBHOOK] Buscando org para account_id=%s...", account_id)
+        org_id = None
+        if account_id:
+            org_id = await sb.get_org_by_chatwoot_account(int(account_id))
 
-    agent = None
-    for agent_type in ["sdr", "support"]:
-        if agent_type in active_types and agent_type in AGENTS:
-            agent = AGENTS[agent_type]
-            break
+        if not org_id:
+            org_id = settings.org_id
+            log.warning(
+                "[WEBHOOK] Org não encontrada para account_id=%s, usando default %s",
+                account_id, org_id,
+            )
 
-    if not agent:
-        return JSONResponse({"status": "ignored", "reason": "no_active_agent"})
+        log.info(
+            "[WEBHOOK] org=%s conv=%s phone=%s name=%s msg=%s",
+            org_id, conversation_id, contact_phone, contact_name, content[:50],
+        )
 
-    result = await agent.process(
-        org_id=org_id,
-        conversation_id=conversation_id,
-        contact_phone=contact_phone,
-        contact_name=contact_name,
-        message=content,
-    )
+        # Determine agent and process
+        log.info("[WEBHOOK] Buscando agentes ativos para org=%s...", org_id)
+        active = await sb.get_active_agents(org_id)
+        active_types = {a["agent_type"] for a in active}
+        log.info("[WEBHOOK] Agentes ativos: %s", active_types)
 
-    return JSONResponse({
-        "status": "processed",
-        "action": result.action,
-        "agent_type": result.agent_type,
-    })
+        agent = None
+        for agent_type in ["sdr", "support"]:
+            if agent_type in active_types and agent_type in AGENTS:
+                agent = AGENTS[agent_type]
+                break
+
+        if not agent:
+            log.warning("[WEBHOOK] Nenhum agente ativo para org=%s", org_id)
+            return JSONResponse({"status": "ignored", "reason": "no_active_agent"})
+
+        log.info("[WEBHOOK] Processando com agente %s...", agent_type)
+        result = await agent.process(
+            org_id=org_id,
+            conversation_id=conversation_id,
+            contact_phone=contact_phone,
+            contact_name=contact_name,
+            message=content,
+        )
+
+        log.info("[WEBHOOK] Resultado: action=%s agent=%s", result.action, result.agent_type)
+        return JSONResponse({
+            "status": "processed",
+            "action": result.action,
+            "agent_type": result.agent_type,
+        })
+
+    except Exception as exc:
+        import traceback
+        tb = traceback.format_exc()
+        log.error("[WEBHOOK] ERRO no processamento: %s\n%s", exc, tb)
+        return JSONResponse(
+            {"status": "error", "reason": str(exc), "traceback": tb},
+            status_code=500,
+        )
 
 
 # ── Knowledge base ──────────────────────────────────────────────────
