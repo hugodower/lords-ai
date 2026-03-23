@@ -1,0 +1,58 @@
+version: "3.8"
+
+services:
+  lords-ai:
+    build: .
+    container_name: lords-ai
+    ports:
+      - "8100:8000"
+    env_file:
+      - .env
+    depends_on:
+      lords-redis:
+        condition: service_healthy
+      lords-chromadb:
+        condition: service_started
+    restart: always
+    networks:
+      - lords-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  lords-redis:
+    image: redis:7-alpine
+    container_name: lords-redis
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    restart: always
+    networks:
+      - lords-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  lords-chromadb:
+    image: chromadb/chroma:0.5.23
+    container_name: lords-chromadb
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=false
+    restart: always
+    networks:
+      - lords-network
+
+volumes:
+  redis_data:
+  chroma_data:
+
+networks:
+  lords-network:
+    driver: bridge
