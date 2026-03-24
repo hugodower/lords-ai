@@ -314,16 +314,25 @@ class BaseAgent(ABC):
             from app.skills.schedule import execute_scheduling
 
             log.info(
-                "[SCHEDULE] Attempting: conv=%s date=%s time=%s contact=%s",
+                "[SCHEDULE] Attempting: conv=%s date=%s time=%s contact=%s "
+                "attendee=%s email=%s participant=%s interest=%s",
                 conversation_id, output.schedule.requested_date,
                 output.schedule.requested_time, contact_name,
+                output.schedule.attendee_name, output.schedule.attendee_email,
+                output.schedule.participant, output.schedule.interest,
             )
             sched_result = await execute_scheduling(
                 org_id=org_id,
                 contact_name=contact_name,
                 contact_phone=contact_phone,
+                contact_email=output.schedule.attendee_email,
                 requested_date=output.schedule.requested_date,
                 requested_time=output.schedule.requested_time,
+                attendee_name=output.schedule.attendee_name,
+                participant=output.schedule.participant,
+                whatsapp_for_reminders=output.schedule.whatsapp_for_reminders,
+                interest=output.schedule.interest,
+                conversation_id=conversation_id,
             )
             if sched_result.get("success"):
                 # Replace agent message with real confirmation

@@ -213,13 +213,45 @@ async def execute_scheduling(
     contact_email: Optional[str] = None,
     requested_date: Optional[str] = None,
     requested_time: Optional[str] = None,
+    attendee_name: Optional[str] = None,
+    participant: Optional[str] = None,
+    whatsapp_for_reminders: Optional[str] = None,
+    interest: Optional[str] = None,
+    conversation_id: Optional[str] = None,
 ) -> dict:
     """Execute the full scheduling flow: create event + build confirmation."""
+
+    # Use attendee_name if provided, fallback to contact_name
+    final_name = attendee_name or contact_name
+    final_email = contact_email
+    final_whatsapp = whatsapp_for_reminders or contact_phone
+
     log.info(
         "[SCHEDULE] ===== execute_scheduling START =====\n"
-        "  org=%s\n  contact=%s (%s)\n  email=%s\n  date=%s  time=%s",
-        org_id, contact_name, contact_phone, contact_email, requested_date, requested_time,
+        "  org=%s\n  contact=%s (%s)\n  attendee_name=%s\n  email=%s\n"
+        "  participant=%s\n  whatsapp=%s\n  interest=%s\n  date=%s  time=%s",
+        org_id, contact_name, contact_phone, final_name, final_email,
+        participant, final_whatsapp, interest, requested_date, requested_time,
     )
+
+    # Save collected data to Redis session for future reference
+    if conversation_id:
+        from app.memory.redis_store import set_conversation_metadata
+        import json as _json
+
+        sched_data = {
+            "attendee_name": final_name,
+            "attendee_email": final_email,
+            "participant": participant,
+            "whatsapp_for_reminders": final_whatsapp,
+            "interest": interest,
+            "requested_date": requested_date,
+            "requested_time": requested_time,
+        }
+        await set_conversation_metadata(
+            conversation_id, "scheduling_data", _json.dumps(sched_data, default=str)
+        )
+        log.info("[SCHEDULE] Saved scheduling data to Redis session — conv=%s", conversation_id)
 
     log.info("[SCHEDULE] Step 1: Fetching scheduling_config from Supabase ...")
     config = await sb.get_scheduling_config(org_id)
@@ -258,22 +290,36 @@ async def execute_scheduling(
         address = company.get("address", "") if company else ""
         log.info("[SCHEDULE] Company: name='%s', address='%s'", company_name, address)
 
-        log.info("[SCHEDULE] Step 4: Calling create_booking ...")
+        # Build event summary and description using collected data
+        summary = f"Reuniao {company_name} x {final_name}"
+        participant_info = participant or final_name
+        interest_info = interest or "a definir"
+        description = (
+            f"Reuniao {company_name}\n"
+            f"Contato: {final_name}\n"
+            f"WhatsApp: {final_whatsapp}\n"
+            f"Participante: {participant_info}\n"
+            f"Interesse: {interest_info}\n"
+            f"Agendado via IA (SDR)"
+        )
+        log.info("[SCHEDULE] Step 4: Event — summary='%s', attendee_email=%s", summary, final_email)
+
+        log.info("[SCHEDULE] Step 5: Calling create_booking ...")
         event = await create_booking(
             org_id=org_id,
-            summary=f"Atendimento - {contact_name} | {company_name}",
-            description=f"Lead: {contact_name}\nTelefone: {contact_phone}\nAgendado via IA (SDR)",
+            summary=summary,
+            description=description,
             start=start,
             end=end,
-            attendee_email=contact_email,
-            attendee_phone=contact_phone,
+            attendee_email=final_email,
+            attendee_phone=final_whatsapp,
         )
 
         if not event:
             log.error("[SCHEDULE] FAIL — create_booking returned None for org %s", org_id)
             return {"success": False, "error": "Failed to create event"}
 
-        log.info("[SCHEDULE] Step 5: Event created — id=%s, building confirmation message ...", event.get("id"))
+        log.info("[SCHEDULE] Step 6: Event created — id=%s, building confirmation message ...", event.get("id"))
 
         # Build confirmation message
         DAYS_PT = ["Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado", "Domingo"]
@@ -289,13 +335,14 @@ async def execute_scheduling(
             .replace("{hora}", start.strftime("%H:%M"))
             .replace("{profissional}", "")
             .replace("{endereco}", address)
-            .replace("{nome}", contact_name)
+            .replace("{nome}", final_name)
         )
 
         log.info(
             "[SCHEDULE] ===== execute_scheduling SUCCESS =====\n"
-            "  event_id=%s\n  confirmation='%s'\n  start=%s  end=%s",
-            event.get("id"), confirm_msg, start.isoformat(), end.isoformat(),
+            "  event_id=%s\n  confirmation='%s'\n  attendee=%s <%s>\n  start=%s  end=%s",
+            event.get("id"), confirm_msg, final_name, final_email,
+            start.isoformat(), end.isoformat(),
         )
 
         return {

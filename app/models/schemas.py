@@ -48,6 +48,11 @@ class CrmUpdates(BaseModel):
 class ScheduleInfo(BaseModel):
     requested_date: Optional[str] = None
     requested_time: Optional[str] = None
+    attendee_name: Optional[str] = None
+    attendee_email: Optional[str] = None
+    participant: Optional[str] = None
+    whatsapp_for_reminders: Optional[str] = None
+    interest: Optional[str] = None
 
 
 class AgentOutput(BaseModel):
