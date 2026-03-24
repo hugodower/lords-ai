@@ -359,3 +359,108 @@ async def get_metrics(period: str = Query("today")):
 
     m = await sb.get_metrics(settings.org_id, date_from)
     return MetricsResponse(**m)
+
+
+# ── Debug: Google Calendar ──────────────────────────────────────────
+
+
+@app.get("/debug/calendar")
+async def debug_calendar():
+    """Diagnostic endpoint to verify Google Calendar config in production."""
+    from app.integrations.google_calendar import GoogleCalendarClient
+    import httpx
+
+    result: dict = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "org_id": settings.org_id,
+        "env": {
+            "google_client_id": settings.google_client_id[:10] + "..." if settings.google_client_id else "EMPTY",
+            "google_client_secret": settings.google_client_secret[:5] + "..." if settings.google_client_secret else "EMPTY",
+            "supabase_url": settings.supabase_url,
+        },
+        "scheduling_config": None,
+        "token_info": None,
+        "refresh_test": None,
+    }
+
+    # 1) Fetch scheduling_config
+    try:
+        config = await sb.get_scheduling_config(settings.org_id)
+        if config:
+            token = config.get("google_oauth_token")
+            token_summary = None
+            if token and isinstance(token, dict):
+                expiry = token.get("expiry_date", 0)
+                now_ms = datetime.utcnow().timestamp() * 1000
+                remaining_min = (expiry - now_ms) / 60_000
+                token_summary = {
+                    "has_access_token": bool(token.get("access_token")),
+                    "has_refresh_token": bool(token.get("refresh_token")),
+                    "expiry_date": expiry,
+                    "remaining_minutes": round(remaining_min, 1),
+                    "expired": remaining_min <= 0,
+                    "token_keys": list(token.keys()),
+                }
+            elif token:
+                token_summary = {"error": f"token is {type(token).__name__}, expected dict"}
+
+            result["scheduling_config"] = {
+                "scheduling_type": config.get("scheduling_type"),
+                "google_calendar_id": config.get("google_calendar_id"),
+                "google_calendar_email": config.get("google_calendar_email"),
+                "slot_duration_minutes": config.get("slot_duration_minutes"),
+                "has_oauth_token": token is not None,
+            }
+            result["token_info"] = token_summary
+
+            # 2) Try token refresh
+            if token and isinstance(token, dict) and token.get("refresh_token"):
+                try:
+                    client_id = settings.google_client_id
+                    client_secret = settings.google_client_secret
+                    if not client_id or not client_secret:
+                        result["refresh_test"] = {"status": "skipped", "reason": "missing client_id or client_secret in env"}
+                    else:
+                        async with httpx.AsyncClient(timeout=15) as client:
+                            resp = await client.post(
+                                "https://oauth2.googleapis.com/token",
+                                data={
+                                    "client_id": client_id,
+                                    "client_secret": client_secret,
+                                    "refresh_token": token["refresh_token"],
+                                    "grant_type": "refresh_token",
+                                },
+                            )
+                        if resp.status_code == 200:
+                            new_tokens = resp.json()
+                            new_expiry = int(datetime.utcnow().timestamp() * 1000) + (new_tokens.get("expires_in", 3600) * 1000)
+
+                            # Save refreshed token
+                            token["access_token"] = new_tokens["access_token"]
+                            token["expiry_date"] = new_expiry
+                            if "refresh_token" in new_tokens:
+                                token["refresh_token"] = new_tokens["refresh_token"]
+                            await sb.update_scheduling_token(settings.org_id, token)
+
+                            result["refresh_test"] = {
+                                "status": "success",
+                                "new_expires_in_seconds": new_tokens.get("expires_in"),
+                                "new_expiry_date": new_expiry,
+                                "token_saved_to_supabase": True,
+                            }
+                        else:
+                            result["refresh_test"] = {
+                                "status": "failed",
+                                "http_status": resp.status_code,
+                                "error": resp.text[:500],
+                            }
+                except Exception as exc:
+                    result["refresh_test"] = {"status": "error", "exception": str(exc)}
+            else:
+                result["refresh_test"] = {"status": "skipped", "reason": "no refresh_token in config"}
+        else:
+            result["scheduling_config"] = {"error": "no scheduling_config row for this org_id"}
+    except Exception as exc:
+        result["scheduling_config"] = {"error": str(exc)}
+
+    return JSONResponse(result)
