@@ -20,32 +20,68 @@ class GoogleCalendarClient:
     def __init__(self, org_id: str, token_data: dict) -> None:
         self.org_id = org_id
         self._token = token_data
+        log.info(
+            "[GCAL] Client init — org=%s, token_keys=%s, has_access=%s, has_refresh=%s, expiry=%s",
+            org_id,
+            list(token_data.keys()) if token_data else "None",
+            bool(token_data.get("access_token")) if token_data else False,
+            bool(token_data.get("refresh_token")) if token_data else False,
+            token_data.get("expiry_date") if token_data else "N/A",
+        )
 
     async def _get_access_token(self) -> Optional[str]:
         """Get valid access token, refreshing if needed."""
         if not self._token:
+            log.error("[GCAL:TOKEN] _token is empty/None for org %s", self.org_id)
             return None
 
         # Check if expired (5 min buffer)
         expiry = self._token.get("expiry_date", 0)
         now_ms = datetime.utcnow().timestamp() * 1000
+        remaining_ms = expiry - now_ms
+        remaining_min = remaining_ms / 60_000
+
+        log.info(
+            "[GCAL:TOKEN] Expiry check — expiry_date=%s, now_ms=%s, remaining=%.1f min, expired=%s",
+            expiry, int(now_ms), remaining_min, remaining_ms <= 300_000,
+        )
+
         if expiry > now_ms + 300_000:
-            return self._token.get("access_token")
+            access = self._token.get("access_token")
+            log.info(
+                "[GCAL:TOKEN] Token still valid (%.1f min left) — access_token=%s...%s",
+                remaining_min,
+                access[:20] if access else "NONE",
+                access[-10:] if access else "",
+            )
+            return access
 
         # Need refresh
+        log.warning(
+            "[GCAL:TOKEN] Token expired or expiring soon (%.1f min left) — initiating refresh for org %s",
+            remaining_min, self.org_id,
+        )
         refresh_token = self._token.get("refresh_token")
         if not refresh_token:
-            log.error("[GCAL] No refresh_token available for org %s", self.org_id)
+            log.error("[GCAL:TOKEN] No refresh_token available for org %s — cannot refresh", self.org_id)
             return None
 
         client_id = settings.google_client_id
         client_secret = settings.google_client_secret
+        log.info(
+            "[GCAL:TOKEN] Refresh credentials — client_id=%s..., client_secret=%s, refresh_token=%s...%s",
+            client_id[:20] if client_id else "EMPTY",
+            "SET" if client_secret else "EMPTY",
+            refresh_token[:15] if refresh_token else "NONE",
+            refresh_token[-5:] if refresh_token else "",
+        )
         if not client_id or not client_secret:
-            log.error("[GCAL] Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET")
+            log.error("[GCAL:TOKEN] Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET in .env")
             return None
 
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=15) as client:
+                log.info("[GCAL:TOKEN] POST https://oauth2.googleapis.com/token ...")
                 resp = await client.post(
                     "https://oauth2.googleapis.com/token",
                     data={
@@ -55,24 +91,40 @@ class GoogleCalendarClient:
                         "grant_type": "refresh_token",
                     },
                 )
+                log.info("[GCAL:TOKEN] Refresh response — status=%s", resp.status_code)
+
                 if resp.status_code != 200:
-                    log.error("[GCAL] Token refresh failed: %s", resp.text)
+                    log.error(
+                        "[GCAL:TOKEN] Token refresh FAILED — status=%s, body=%s",
+                        resp.status_code, resp.text,
+                    )
                     return None
 
                 new_tokens = resp.json()
+                log.info(
+                    "[GCAL:TOKEN] Refresh SUCCESS — new keys=%s, expires_in=%s sec",
+                    list(new_tokens.keys()), new_tokens.get("expires_in"),
+                )
+
                 self._token["access_token"] = new_tokens["access_token"]
                 self._token["expiry_date"] = int(
                     datetime.utcnow().timestamp() * 1000
-                ) + (new_tokens["expires_in"] * 1000)
+                ) + (new_tokens.get("expires_in", 3600) * 1000)
+
+                # Keep refresh_token if Google returned a new one
+                if "refresh_token" in new_tokens:
+                    log.info("[GCAL:TOKEN] Google returned new refresh_token — updating")
+                    self._token["refresh_token"] = new_tokens["refresh_token"]
 
                 # Persist refreshed token to Supabase
                 from app.integrations.supabase_client import update_scheduling_token
 
+                log.info("[GCAL:TOKEN] Persisting refreshed token to Supabase for org %s ...", self.org_id)
                 await update_scheduling_token(self.org_id, self._token)
-                log.info("[GCAL] Token refreshed for org %s", self.org_id)
+                log.info("[GCAL:TOKEN] Token refreshed and saved — org %s, new expiry=%s", self.org_id, self._token["expiry_date"])
                 return self._token["access_token"]
         except Exception as exc:
-            log.error("[GCAL] Token refresh error: %s", exc)
+            log.error("[GCAL:TOKEN] Token refresh EXCEPTION: %s — %s", type(exc).__name__, exc, exc_info=True)
             return None
 
     async def get_free_slots(
@@ -87,37 +139,54 @@ class GoogleCalendarClient:
         max_slots: int = 8,
     ) -> list[dict]:
         """Find free time slots using the FreeBusy API."""
+        log.info(
+            "[GCAL:FREEBUSY] get_free_slots — calendar=%s, range=%s to %s, duration=%d min, hours=%s-%s",
+            calendar_id, date_start.isoformat(), date_end.isoformat(),
+            duration_minutes, available_start_time, available_end_time,
+        )
+
         access_token = await self._get_access_token()
         if not access_token:
+            log.error("[GCAL:FREEBUSY] No access token — aborting free slots query")
             return []
 
+        freebusy_payload = {
+            "timeMin": date_start.isoformat() + "Z",
+            "timeMax": date_end.isoformat() + "Z",
+            "items": [{"id": calendar_id}],
+        }
+
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=15) as client:
+                log.info("[GCAL:FREEBUSY] POST %s/freeBusy — payload=%s", BASE_URL, freebusy_payload)
                 resp = await client.post(
                     f"{BASE_URL}/freeBusy",
                     headers={"Authorization": f"Bearer {access_token}"},
-                    json={
-                        "timeMin": date_start.isoformat() + "Z",
-                        "timeMax": date_end.isoformat() + "Z",
-                        "items": [{"id": calendar_id}],
-                    },
+                    json=freebusy_payload,
                 )
+                log.info("[GCAL:FREEBUSY] Response — status=%s", resp.status_code)
                 if resp.status_code != 200:
-                    log.error("[GCAL] FreeBusy failed: %s", resp.text)
+                    log.error("[GCAL:FREEBUSY] FreeBusy FAILED — status=%s, body=%s", resp.status_code, resp.text)
                     return []
 
                 busy_data = resp.json()
+                log.info("[GCAL:FREEBUSY] Response body keys=%s", list(busy_data.keys()))
         except Exception as exc:
-            log.error("[GCAL] FreeBusy error: %s", exc)
+            log.error("[GCAL:FREEBUSY] FreeBusy EXCEPTION: %s — %s", type(exc).__name__, exc, exc_info=True)
             return []
 
         # Collect busy periods
         busy_periods: list[tuple[datetime, datetime]] = []
-        for cal_data in busy_data.get("calendars", {}).values():
+        for cal_id, cal_data in busy_data.get("calendars", {}).items():
+            errors = cal_data.get("errors", [])
+            if errors:
+                log.error("[GCAL:FREEBUSY] Calendar '%s' errors: %s", cal_id, errors)
             for busy in cal_data.get("busy", []):
                 bs = datetime.fromisoformat(busy["start"].replace("Z", "+00:00")).replace(tzinfo=None)
                 be = datetime.fromisoformat(busy["end"].replace("Z", "+00:00")).replace(tzinfo=None)
                 busy_periods.append((bs, be))
+
+        log.info("[GCAL:FREEBUSY] Found %d busy periods", len(busy_periods))
 
         # Generate free slots day by day
         DAYS_PT = ["Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado", "Domingo"]
@@ -165,6 +234,7 @@ class GoogleCalendarClient:
 
             current_date += timedelta(days=1)
 
+        log.info("[GCAL:FREEBUSY] Returning %d available slots", len(slots))
         return slots
 
     async def create_event(
@@ -178,8 +248,14 @@ class GoogleCalendarClient:
         attendee_phone: Optional[str] = None,
     ) -> Optional[dict]:
         """Create a calendar event."""
+        log.info(
+            "[GCAL:CREATE] create_event called — calendar=%s, summary='%s', start=%s, end=%s, email=%s, phone=%s",
+            calendar_id, summary, start.isoformat(), end.isoformat(), attendee_email, attendee_phone,
+        )
+
         access_token = await self._get_access_token()
         if not access_token:
+            log.error("[GCAL:CREATE] No access token — cannot create event for org %s", self.org_id)
             return None
 
         event_body: dict = {
@@ -198,25 +274,36 @@ class GoogleCalendarClient:
         if attendee_email:
             event_body["attendees"] = [{"email": attendee_email}]
 
+        url = f"{BASE_URL}/calendars/{calendar_id}/events"
+        log.info("[GCAL:CREATE] POST %s — body_keys=%s", url, list(event_body.keys()))
+
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(
-                    f"{BASE_URL}/calendars/{calendar_id}/events",
+                    url,
                     headers={
                         "Authorization": f"Bearer {access_token}",
                         "Content-Type": "application/json",
                     },
                     json=event_body,
                 )
+                log.info("[GCAL:CREATE] Response — status=%s", resp.status_code)
+
                 if resp.status_code not in (200, 201):
-                    log.error("[GCAL] Create event failed: %s", resp.text)
+                    log.error(
+                        "[GCAL:CREATE] Create event FAILED — status=%s, body=%s",
+                        resp.status_code, resp.text,
+                    )
                     return None
 
                 event = resp.json()
-                log.info("[GCAL] Event created: %s for org %s", event["id"], self.org_id)
+                log.info(
+                    "[GCAL:CREATE] Event created SUCCESS — id=%s, htmlLink=%s, org=%s",
+                    event.get("id"), event.get("htmlLink"), self.org_id,
+                )
                 return event
         except Exception as exc:
-            log.error("[GCAL] Create event error: %s", exc)
+            log.error("[GCAL:CREATE] Create event EXCEPTION: %s — %s", type(exc).__name__, exc, exc_info=True)
             return None
 
     async def update_event(

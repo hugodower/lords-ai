@@ -12,15 +12,25 @@ log = get_logger("skill:schedule")
 
 async def get_scheduling_info(org_id: str) -> dict:
     """Get scheduling configuration for the org."""
+    log.info("[SCHED] get_scheduling_info called — org=%s", org_id)
     config = await sb.get_scheduling_config(org_id)
     if not config:
+        log.warning("[SCHED] No scheduling_config found for org %s — returning defaults", org_id)
         return {"type": "collect_preference", "configured": False}
 
+    stype = config.get("scheduling_type", "collect_preference")
+    has_token = bool(config.get("google_oauth_token"))
+    cal_id = config.get("google_calendar_id")
+    log.info(
+        "[SCHED] scheduling_config loaded — org=%s, type=%s, calendar_id=%s, has_oauth_token=%s",
+        org_id, stype, cal_id, has_token,
+    )
+
     return {
-        "type": config.get("scheduling_type", "collect_preference"),
+        "type": stype,
         "configured": True,
         "external_link": config.get("external_link"),
-        "calendar_id": config.get("google_calendar_id"),
+        "calendar_id": cal_id,
         "slot_duration": config.get("slot_duration_minutes", 60),
         "buffer_minutes": config.get("buffer_minutes", 15),
         "available_start": config.get("available_start_time", "08:00"),
@@ -36,28 +46,44 @@ async def get_scheduling_info(org_id: str) -> dict:
 
 def _build_gcal_client(config: dict, org_id: str) -> Optional[GoogleCalendarClient]:
     """Build a GoogleCalendarClient from scheduling config, if connected."""
+    log.info("[SCHED:BUILD] _build_gcal_client called for org %s", org_id)
     oauth_token = config.get("google_oauth_token")
     if not oauth_token:
-        log.warning("[GCAL] No google_oauth_token in scheduling config for org %s", org_id)
+        log.error("[SCHED:BUILD] No google_oauth_token in scheduling config for org %s — CANNOT build client", org_id)
         return None
     if not isinstance(oauth_token, dict):
-        log.warning(
-            "[GCAL] google_oauth_token is %s (expected dict) for org %s",
-            type(oauth_token).__name__, org_id,
+        log.error(
+            "[SCHED:BUILD] google_oauth_token is %s (expected dict) for org %s — value preview: %s",
+            type(oauth_token).__name__, org_id, str(oauth_token)[:100],
         )
         return None
-    log.info("[GCAL] Client built for org %s (token type=%s)", org_id, type(oauth_token).__name__)
+
+    token_keys = list(oauth_token.keys())
+    has_access = bool(oauth_token.get("access_token"))
+    has_refresh = bool(oauth_token.get("refresh_token"))
+    expiry = oauth_token.get("expiry_date", 0)
+    log.info(
+        "[SCHED:BUILD] Token data — keys=%s, has_access=%s, has_refresh=%s, expiry_date=%s",
+        token_keys, has_access, has_refresh, expiry,
+    )
     return GoogleCalendarClient(org_id=org_id, token_data=oauth_token)
 
 
 async def get_available_slots(org_id: str, days_ahead: int = 7) -> list[dict]:
     """Get available calendar slots."""
+    log.info("[SCHED:SLOTS] get_available_slots — org=%s, days_ahead=%d", org_id, days_ahead)
+
     config = await sb.get_scheduling_config(org_id)
-    if not config or config.get("scheduling_type") != "google_calendar":
+    if not config:
+        log.warning("[SCHED:SLOTS] No scheduling_config for org %s", org_id)
+        return []
+    if config.get("scheduling_type") != "google_calendar":
+        log.info("[SCHED:SLOTS] scheduling_type='%s' (not google_calendar) — returning []", config.get("scheduling_type"))
         return []
 
     cal_client = _build_gcal_client(config, org_id)
     if not cal_client:
+        log.error("[SCHED:SLOTS] Failed to build GCal client for org %s", org_id)
         return []
 
     calendar_id = config.get("google_calendar_id") or "primary"
@@ -66,7 +92,12 @@ async def get_available_slots(org_id: str, days_ahead: int = 7) -> list[dict]:
     start = now + timedelta(hours=min_advance)
     end = now + timedelta(days=min(days_ahead, config.get("max_advance_days") or 30))
 
-    return await cal_client.get_free_slots(
+    log.info(
+        "[SCHED:SLOTS] Querying free slots — calendar=%s, start=%s, end=%s",
+        calendar_id, start.isoformat(), end.isoformat(),
+    )
+
+    slots = await cal_client.get_free_slots(
         calendar_id=calendar_id,
         date_start=start,
         date_end=end,
@@ -75,6 +106,8 @@ async def get_available_slots(org_id: str, days_ahead: int = 7) -> list[dict]:
         available_start_time=config.get("available_start_time") or "08:00",
         available_end_time=config.get("available_end_time") or "17:00",
     )
+    log.info("[SCHED:SLOTS] Got %d available slots for org %s", len(slots), org_id)
+    return slots
 
 
 async def get_scheduling_context(org_id: str) -> str:
@@ -135,9 +168,17 @@ async def create_booking(
     attendee_phone: Optional[str] = None,
 ) -> Optional[dict]:
     """Create a calendar booking."""
+    log.info(
+        "[BOOKING] create_booking called — org=%s, summary='%s', start=%s, end=%s",
+        org_id, summary, start.isoformat(), end.isoformat(),
+    )
+
     config = await sb.get_scheduling_config(org_id)
-    if not config or config.get("scheduling_type") != "google_calendar":
-        log.warning("Google Calendar not configured for org %s", org_id)
+    if not config:
+        log.error("[BOOKING] No scheduling_config for org %s", org_id)
+        return None
+    if config.get("scheduling_type") != "google_calendar":
+        log.error("[BOOKING] scheduling_type='%s' (not google_calendar) for org %s", config.get("scheduling_type"), org_id)
         return None
 
     cal_client = _build_gcal_client(config, org_id)
@@ -146,7 +187,8 @@ async def create_booking(
         return None
 
     calendar_id = config.get("google_calendar_id", "primary")
-    log.info("[BOOKING] Creating event on calendar '%s' for org %s", calendar_id, org_id)
+    log.info("[BOOKING] Calling GCal create_event — calendar='%s', org=%s", calendar_id, org_id)
+
     event = await cal_client.create_event(
         calendar_id=calendar_id,
         summary=summary,
@@ -156,8 +198,11 @@ async def create_booking(
         attendee_email=attendee_email,
         attendee_phone=attendee_phone,
     )
+
     if event:
-        log.info("Booking created for org %s: %s", org_id, event.get("id"))
+        log.info("[BOOKING] SUCCESS — event_id=%s, link=%s", event.get("id"), event.get("htmlLink"))
+    else:
+        log.error("[BOOKING] FAILED — create_event returned None for org %s", org_id)
     return event
 
 
@@ -171,34 +216,49 @@ async def execute_scheduling(
 ) -> dict:
     """Execute the full scheduling flow: create event + build confirmation."""
     log.info(
-        "[SCHEDULE] execute_scheduling called: org=%s contact=%s date=%s time=%s",
-        org_id, contact_name, requested_date, requested_time,
+        "[SCHEDULE] ===== execute_scheduling START =====\n"
+        "  org=%s\n  contact=%s (%s)\n  email=%s\n  date=%s  time=%s",
+        org_id, contact_name, contact_phone, contact_email, requested_date, requested_time,
     )
+
+    log.info("[SCHEDULE] Step 1: Fetching scheduling_config from Supabase ...")
     config = await sb.get_scheduling_config(org_id)
 
     if not config:
-        log.error("[SCHEDULE] No scheduling config found for org %s", org_id)
+        log.error("[SCHEDULE] FAIL — No scheduling config found for org %s", org_id)
         return {"success": False, "error": "Scheduling config not found"}
+
+    log.info(
+        "[SCHEDULE] Config loaded — type=%s, calendar_id=%s, has_token=%s, slot_duration=%d",
+        config.get("scheduling_type"), config.get("google_calendar_id"),
+        bool(config.get("google_oauth_token")), config.get("slot_duration_minutes", 60),
+    )
+
     if config.get("scheduling_type") != "google_calendar":
         log.error(
-            "[SCHEDULE] scheduling_type='%s' (expected 'google_calendar') for org %s",
+            "[SCHEDULE] FAIL — scheduling_type='%s' (expected 'google_calendar') for org %s",
             config.get("scheduling_type"), org_id,
         )
         return {"success": False, "error": f"scheduling_type is '{config.get('scheduling_type')}', not 'google_calendar'"}
 
     if not requested_date or not requested_time:
+        log.error("[SCHEDULE] FAIL — Date or time missing: date=%s, time=%s", requested_date, requested_time)
         return {"success": False, "error": "Date and time required"}
 
     try:
         duration = config.get("slot_duration_minutes", 60)
         start = datetime.fromisoformat(f"{requested_date}T{requested_time}:00")
         end = start + timedelta(minutes=duration)
+        log.info("[SCHEDULE] Step 2: Parsed datetime — start=%s, end=%s, duration=%d min", start, end, duration)
 
         # Get company info for the event
+        log.info("[SCHEDULE] Step 3: Fetching company_info ...")
         company = await sb.get_company_info(org_id)
         company_name = company.get("company_name", "") if company else ""
         address = company.get("address", "") if company else ""
+        log.info("[SCHEDULE] Company: name='%s', address='%s'", company_name, address)
 
+        log.info("[SCHEDULE] Step 4: Calling create_booking ...")
         event = await create_booking(
             org_id=org_id,
             summary=f"Atendimento - {contact_name} | {company_name}",
@@ -210,7 +270,10 @@ async def execute_scheduling(
         )
 
         if not event:
+            log.error("[SCHEDULE] FAIL — create_booking returned None for org %s", org_id)
             return {"success": False, "error": "Failed to create event"}
+
+        log.info("[SCHEDULE] Step 5: Event created — id=%s, building confirmation message ...", event.get("id"))
 
         # Build confirmation message
         DAYS_PT = ["Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado", "Domingo"]
@@ -229,7 +292,11 @@ async def execute_scheduling(
             .replace("{nome}", contact_name)
         )
 
-        log.info("[SCHEDULE] Event created for %s at %s", contact_name, start)
+        log.info(
+            "[SCHEDULE] ===== execute_scheduling SUCCESS =====\n"
+            "  event_id=%s\n  confirmation='%s'\n  start=%s  end=%s",
+            event.get("id"), confirm_msg, start.isoformat(), end.isoformat(),
+        )
 
         return {
             "success": True,
@@ -240,5 +307,5 @@ async def execute_scheduling(
         }
 
     except Exception as exc:
-        log.error("[SCHEDULE] Error creating event: %s", exc)
+        log.error("[SCHEDULE] EXCEPTION in execute_scheduling: %s — %s", type(exc).__name__, exc, exc_info=True)
         return {"success": False, "error": str(exc)}

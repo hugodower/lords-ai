@@ -264,13 +264,21 @@ async def get_scheduling_config(org_id: str) -> Optional[dict]:
 
 async def update_scheduling_token(org_id: str, token_data: dict) -> None:
     """Update the OAuth token in scheduling_config after a refresh."""
+    log.info(
+        "[TOKEN] update_scheduling_token — org=%s, token_keys=%s, expiry=%s",
+        org_id, list(token_data.keys()), token_data.get("expiry_date"),
+    )
     sb = get_supabase()
     try:
-        sb.table("scheduling_config").update(
+        result = sb.table("scheduling_config").update(
             {"google_oauth_token": token_data}
         ).eq("organization_id", org_id).execute()
+        rows_affected = len(result.data) if result and result.data else 0
+        log.info("[TOKEN] Token saved to Supabase — org=%s, rows_affected=%d", org_id, rows_affected)
+        if rows_affected == 0:
+            log.warning("[TOKEN] No rows updated — scheduling_config may not exist for org %s", org_id)
     except Exception as exc:
-        log.error("Failed to update scheduling token: %s", exc)
+        log.error("[TOKEN] FAILED to save token — org=%s, error=%s", org_id, exc, exc_info=True)
 
 
 # ── Conversation logs ───────────────────────────────────────────────
