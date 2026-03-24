@@ -100,7 +100,7 @@ async def get_products(org_id: str) -> list[dict]:
     try:
         resp = (
             sb.table("products")
-            .select("id, name, description, price, category_id, status")
+            .select("id, name, description, unit_price, category_id, status")
             .eq("organization_id", org_id)
             .execute()
         )

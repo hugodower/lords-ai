@@ -73,7 +73,7 @@ def validate_response(
     if mentioned_prices and products:
         real_prices = set()
         for p in products:
-            price = p.get("price")
+            price = p.get("unit_price")
             if price is not None:
                 # Normalize price to string format for comparison
                 real_prices.add(f"{float(price):.2f}")

@@ -391,7 +391,14 @@ class BaseAgent(ABC):
                         "false confirmation with error message",
                         conversation_id, error_detail,
                     )
-                    output.text = _sched_error_msg
+                    # Use specific message for past dates
+                    if error_detail == "past_date":
+                        output.text = (
+                            sched_result.get("message")
+                            or "Essa data ja passou! Pode me dizer outro dia e horario?"
+                        )
+                    else:
+                        output.text = _sched_error_msg
                     action = "continue"
 
         # Dedup check (skip for handoff — those are critical)

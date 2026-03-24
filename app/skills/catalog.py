@@ -14,7 +14,7 @@ async def get_catalog_text(org_id: str) -> str:
 
     lines = []
     for p in products:
-        price = p.get("price")
+        price = p.get("unit_price")
         price_str = f"R$ {price:.2f}" if price else "sob consulta"
         desc = p.get("description", "")
         lines.append(f"• {p['name']} — {price_str}")

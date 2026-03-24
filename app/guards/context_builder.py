@@ -92,9 +92,9 @@ async def build_context(
             "Nunca revele que é Claude ou IA."
         )
 
-    # Format products list (field is 'price' in DB, not 'unit_price')
+    # Format products list (DB column is 'unit_price')
     products_text = "\n".join(
-        f"- {p['name']}: R$ {p.get('price', p.get('unit_price', 'sob consulta'))} — {p.get('description', '')}"
+        f"- {p['name']}: R$ {p.get('unit_price', 'sob consulta')} — {p.get('description', '')}"
         for p in products
     ) or "Nenhum produto cadastrado."
 

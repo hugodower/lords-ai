@@ -280,6 +280,29 @@ async def execute_scheduling(
     try:
         duration = config.get("slot_duration_minutes", 60)
         start = datetime.fromisoformat(f"{requested_date}T{requested_time}:00")
+
+        # Fix wrong year: Claude's training data may cause it to use past years
+        now = datetime.utcnow()
+        if start.year < now.year:
+            log.warning(
+                "[SCHEDULE] Wrong year detected: %d (current=%d) — auto-correcting date from %s to %s",
+                start.year, now.year, requested_date,
+                start.replace(year=now.year).strftime("%Y-%m-%d"),
+            )
+            start = start.replace(year=now.year)
+
+        # Reject dates in the past
+        if start < now:
+            log.error(
+                "[SCHEDULE] FAIL — Date is in the past: %s (now=%s)",
+                start.isoformat(), now.isoformat(),
+            )
+            return {
+                "success": False,
+                "error": "past_date",
+                "message": f"A data {start.strftime('%d/%m/%Y %H:%M')} já passou. Peça ao lead para escolher outra data.",
+            }
+
         end = start + timedelta(minutes=duration)
         log.info("[SCHEDULE] Step 2: Parsed datetime — start=%s, end=%s, duration=%d min", start, end, duration)
 
