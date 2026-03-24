@@ -39,54 +39,85 @@ async def debounce_message(
     version_key = f"debounce:{conversation_id}:version"
 
     r = await get_redis()
-    if r:
+    using_redis = r is not None
+
+    log.info(
+        "[DEBOUNCE] Received msg for conv=%s version=%s redis=%s msg_preview='%s'",
+        conversation_id, version[:8], using_redis, message[:80],
+    )
+
+    if using_redis:
         await r.rpush(pending_key, message)
         await r.expire(pending_key, DEBOUNCE_SECONDS + 30)
         await r.set(version_key, version, ex=DEBOUNCE_SECONDS + 30)
+        buffered_count = await r.llen(pending_key)
+        log.info(
+            "[DEBOUNCE] Buffered in Redis: conv=%s total_pending=%d version=%s",
+            conversation_id, buffered_count, version[:8],
+        )
     else:
         _pending_msgs.setdefault(conversation_id, []).append(message)
         _versions[conversation_id] = version
+        log.info(
+            "[DEBOUNCE] Buffered in-memory: conv=%s total_pending=%d version=%s",
+            conversation_id, len(_pending_msgs.get(conversation_id, [])), version[:8],
+        )
 
     # Cancel any previous waiting task for this conversation
     prev = _tasks.pop(conversation_id, None)
     if prev and not prev.done():
         prev.cancel()
+        log.info("[DEBOUNCE] Cancelled previous timer for conv=%s", conversation_id)
 
     async def _deferred() -> None:
+        log.info(
+            "[DEBOUNCE] Timer started: conv=%s waiting %ds version=%s",
+            conversation_id, DEBOUNCE_SECONDS, version[:8],
+        )
         await asyncio.sleep(DEBOUNCE_SECONDS)
 
+        # Re-acquire Redis connection (don't rely on stale reference)
+        _r = await get_redis()
+        _using_redis = _r is not None
+
         # Check if we are still the latest version
-        if r:
-            current = await r.get(version_key)
+        if _using_redis:
+            current = await _r.get(version_key)
         else:
             current = _versions.get(conversation_id)
 
         if current != version:
+            log.info(
+                "[DEBOUNCE] Superseded: conv=%s our_version=%s current=%s — skipping",
+                conversation_id, version[:8], (current or "None")[:8],
+            )
             return  # a newer message superseded us
 
         # Collect all buffered messages
-        if r:
-            msgs = await r.lrange(pending_key, 0, -1)
-            await r.delete(pending_key, version_key)
+        if _using_redis:
+            msgs = await _r.lrange(pending_key, 0, -1)
+            await _r.delete(pending_key, version_key)
         else:
             msgs = _pending_msgs.pop(conversation_id, [])
             _versions.pop(conversation_id, None)
 
         if not msgs:
+            log.warning("[DEBOUNCE] No messages found after timer for conv=%s", conversation_id)
             return
 
         combined = "\n".join(msgs)
         log.info(
-            "[DEBOUNCE] Processing %d buffered msg(s) for conv %s (len=%d)",
-            len(msgs), conversation_id, len(combined),
+            "[DEBOUNCE] FIRING: conv=%s msgs=%d combined_len=%d version=%s content='%s'",
+            conversation_id, len(msgs), len(combined), version[:8], combined[:150],
         )
 
         try:
             await process_fn(combined)
+            log.info("[DEBOUNCE] process_fn completed for conv=%s", conversation_id)
         except Exception as exc:
             log.error(
-                "[DEBOUNCE] process_fn error for conv %s: %s",
-                conversation_id, exc,
+                "[DEBOUNCE] process_fn ERROR for conv %s: %s",
+                conversation_id, exc, exc_info=True,
             )
 
     _tasks[conversation_id] = asyncio.create_task(_deferred())

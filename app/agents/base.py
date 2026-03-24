@@ -212,16 +212,24 @@ class BaseAgent(ABC):
             return ProcessMessageResponse(action="error", error=str(e))
 
         # Parse agent output
+        log.info(
+            "[CLAUDE_RAW] conv=%s raw_response (first 500 chars): %s",
+            conversation_id, raw_response[:500],
+        )
         try:
             output = AgentOutput.model_validate_json(raw_response)
+            log.info("[CLAUDE_PARSED] conv=%s action=%s schedule=%s", conversation_id, output.action, output.schedule is not None)
         except Exception:
             # Try to extract JSON from response
             try:
                 json_start = raw_response.index("{")
                 json_end = raw_response.rindex("}") + 1
-                output = AgentOutput.model_validate_json(raw_response[json_start:json_end])
-            except Exception:
+                json_substr = raw_response[json_start:json_end]
+                output = AgentOutput.model_validate_json(json_substr)
+                log.info("[CLAUDE_PARSED] conv=%s (extracted) action=%s schedule=%s", conversation_id, output.action, output.schedule is not None)
+            except Exception as parse_err:
                 # Use raw text as response
+                log.warning("[CLAUDE_PARSED] conv=%s JSON parse failed (%s), using raw text", conversation_id, parse_err)
                 output = AgentOutput(text=raw_response, action="continue", skill_used="general")
 
         # ── Layer 5: Response validation ─────────────────────────────
@@ -309,52 +317,82 @@ class BaseAgent(ABC):
         # ── Success: send response ───────────────────────────────────
         action = output.action
 
+        # Log full Claude output for debugging action routing
+        log.info(
+            "[AGENT_OUTPUT] conv=%s action='%s' skill='%s' temp='%s' "
+            "has_schedule=%s schedule_data=%s text_preview='%s'",
+            conversation_id, output.action, output.skill_used,
+            output.lead_temperature, output.schedule is not None,
+            output.schedule.model_dump() if output.schedule else None,
+            output.text[:100],
+        )
+
         # Handle scheduling requested by the agent
-        if action == "schedule" and output.schedule:
+        if action == "schedule":
             from app.skills.schedule import execute_scheduling
 
-            log.info(
-                "[SCHEDULE] Attempting: conv=%s date=%s time=%s contact=%s "
-                "attendee=%s email=%s participant=%s interest=%s",
-                conversation_id, output.schedule.requested_date,
-                output.schedule.requested_time, contact_name,
-                output.schedule.attendee_name, output.schedule.attendee_email,
-                output.schedule.participant, output.schedule.interest,
+            _sched_error_msg = (
+                "Opa, tive um probleminha pra confirmar o horario agora. "
+                "Vou pedir pra equipe agendar manualmente e te confirmo em breve, tudo bem?"
             )
-            sched_result = await execute_scheduling(
-                org_id=org_id,
-                contact_name=contact_name,
-                contact_phone=contact_phone,
-                contact_email=output.schedule.attendee_email,
-                requested_date=output.schedule.requested_date,
-                requested_time=output.schedule.requested_time,
-                attendee_name=output.schedule.attendee_name,
-                participant=output.schedule.participant,
-                whatsapp_for_reminders=output.schedule.whatsapp_for_reminders,
-                interest=output.schedule.interest,
-                conversation_id=conversation_id,
-            )
-            if sched_result.get("success"):
-                # Replace agent message with real confirmation
-                output.text = sched_result["confirmation_message"]
-                action = "schedule"
-                log.info(
-                    "[SCHEDULE] Success: conv=%s event_id=%s",
-                    conversation_id, sched_result.get("event_id"),
-                )
-            else:
-                # Scheduling FAILED — do NOT send Claude's "agendei" text
-                error_detail = sched_result.get("error", "unknown")
+
+            if not output.schedule:
                 log.error(
-                    "[SCHEDULE] FAILED for conv %s: %s — replacing Claude's "
-                    "false confirmation with error message",
-                    conversation_id, error_detail,
+                    "[SCHEDULE] action='schedule' but output.schedule is NULL — "
+                    "Claude forgot to fill schedule fields. conv=%s raw_text='%s'",
+                    conversation_id, output.text[:200],
                 )
-                output.text = (
-                    "Opa, tive um probleminha pra confirmar o horario agora. "
-                    "Vou pedir pra equipe agendar manualmente e te confirmo em breve, tudo bem?"
-                )
+                output.text = _sched_error_msg
                 action = "continue"
+            elif not output.schedule.requested_date or not output.schedule.requested_time:
+                log.error(
+                    "[SCHEDULE] action='schedule' but missing date/time — "
+                    "date=%s time=%s conv=%s schedule_dump=%s",
+                    output.schedule.requested_date, output.schedule.requested_time,
+                    conversation_id, output.schedule.model_dump(),
+                )
+                output.text = _sched_error_msg
+                action = "continue"
+            else:
+                log.info(
+                    "[SCHEDULE] Attempting: conv=%s date=%s time=%s contact=%s "
+                    "attendee=%s email=%s participant=%s whatsapp=%s interest=%s",
+                    conversation_id, output.schedule.requested_date,
+                    output.schedule.requested_time, contact_name,
+                    output.schedule.attendee_name, output.schedule.attendee_email,
+                    output.schedule.participant, output.schedule.whatsapp_for_reminders,
+                    output.schedule.interest,
+                )
+                sched_result = await execute_scheduling(
+                    org_id=org_id,
+                    contact_name=contact_name,
+                    contact_phone=contact_phone,
+                    contact_email=output.schedule.attendee_email,
+                    requested_date=output.schedule.requested_date,
+                    requested_time=output.schedule.requested_time,
+                    attendee_name=output.schedule.attendee_name,
+                    participant=output.schedule.participant,
+                    whatsapp_for_reminders=output.schedule.whatsapp_for_reminders,
+                    interest=output.schedule.interest,
+                    conversation_id=conversation_id,
+                )
+                if sched_result.get("success"):
+                    output.text = sched_result["confirmation_message"]
+                    action = "schedule"
+                    log.info(
+                        "[SCHEDULE] SUCCESS: conv=%s event_id=%s confirmation='%s'",
+                        conversation_id, sched_result.get("event_id"),
+                        sched_result.get("confirmation_message", "")[:100],
+                    )
+                else:
+                    error_detail = sched_result.get("error", "unknown")
+                    log.error(
+                        "[SCHEDULE] FAILED for conv %s: %s — replacing Claude's "
+                        "false confirmation with error message",
+                        conversation_id, error_detail,
+                    )
+                    output.text = _sched_error_msg
+                    action = "continue"
 
         # Dedup check (skip for handoff — those are critical)
         if action != "handoff" and await is_duplicate_response(conversation_id, output.text):

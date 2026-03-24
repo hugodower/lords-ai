@@ -13,6 +13,8 @@ log = get_logger("redis")
 
 _pool: Optional[aioredis.Redis] = None
 _redis_available: Optional[bool] = None
+_redis_last_retry: float = 0.0
+_REDIS_RETRY_INTERVAL = 30.0  # Retry Redis connection every 30s
 
 CONVERSATION_TTL = 3600 * 24  # 24 hours
 
@@ -23,19 +25,27 @@ _mem_paused: bool = False
 
 
 async def get_redis() -> Optional[aioredis.Redis]:
-    global _pool, _redis_available
+    global _pool, _redis_available, _redis_last_retry
+    # If previously failed, retry periodically instead of permanently giving up
     if _redis_available is False:
-        return None
+        now = time.time()
+        if now - _redis_last_retry < _REDIS_RETRY_INTERVAL:
+            return None
+        log.info("[REDIS] Retrying connection after previous failure...")
+        _redis_last_retry = now
+        _redis_available = None  # Reset to allow retry
+        _pool = None
     if _pool is None:
         try:
             _pool = aioredis.from_url(settings.redis_url, decode_responses=True)
             await _pool.ping()
             _redis_available = True
-            log.info("Redis connection pool created")
-        except Exception:
+            log.info("[REDIS] Connection pool created — url=%s", settings.redis_url[:30] + "...")
+        except Exception as exc:
             _redis_available = False
+            _redis_last_retry = time.time()
             _pool = None
-            log.warning("Redis unavailable — using in-memory fallback")
+            log.warning("[REDIS] Unavailable (%s) — using in-memory fallback", exc)
             return None
     return _pool
 
