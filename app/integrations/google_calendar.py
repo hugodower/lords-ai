@@ -301,7 +301,12 @@ class GoogleCalendarClient:
             },
         }
         if attendee_email:
-            event_body["attendees"] = [{"email": attendee_email}]
+            # Support multiple emails separated by comma, semicolon, or space
+            import re
+            emails = [e.strip() for e in re.split(r"[,;\s]+", attendee_email) if "@" in e.strip()]
+            if emails:
+                event_body["attendees"] = [{"email": e} for e in emails]
+                log.info("[GCAL:CREATE] Attendees: %s", emails)
 
         url = f"{BASE_URL}/calendars/{calendar_id}/events"
         log.info("[GCAL:CREATE] POST %s — body_keys=%s", url, list(event_body.keys()))
