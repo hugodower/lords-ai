@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Application code + prompt templates
 COPY app/ app/
 COPY templates/ templates/
+COPY scripts/ scripts/
 
 EXPOSE 8000
 
