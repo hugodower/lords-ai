@@ -136,6 +136,43 @@ async def clear_conversation(conversation_id: str) -> None:
     await r.delete(_history_key(conversation_id), _meta_key(conversation_id))
 
 
+# ── Agreed schedule memory ────────────────────────────────────────────
+
+_mem_agreed: dict[str, str] = {}
+
+
+def _agreed_key(conversation_id: str) -> str:
+    return f"agreed_schedule:{conversation_id}"
+
+
+async def get_agreed_schedule(conversation_id: str) -> Optional[dict]:
+    """Return previously agreed schedule data, or None."""
+    key = _agreed_key(conversation_id)
+    r = await get_redis()
+    if r is None:
+        raw = _mem_agreed.get(key)
+    else:
+        raw = await r.get(key)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+async def save_agreed_schedule(conversation_id: str, data: dict) -> None:
+    """Persist schedule data the lead already agreed to."""
+    key = _agreed_key(conversation_id)
+    value = json.dumps(data, default=str)
+    r = await get_redis()
+    if r is None:
+        _mem_agreed[key] = value
+    else:
+        await r.set(key, value, ex=CONVERSATION_TTL)
+    log.info("[AGREED] Saved agreed_schedule for conv=%s: %s", conversation_id, value[:200])
+
+
 # ── Pause state ──────────────────────────────────────────────────────
 
 PAUSE_KEY = "lords-ai:paused"

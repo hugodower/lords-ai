@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
 from app.integrations import supabase_client as sb
-from app.memory.redis_store import get_conversation_history
+from app.memory.redis_store import get_conversation_history, get_agreed_schedule
 from app.knowledge.rag import search_knowledge
 from app.utils.logger import get_logger
+
+BRT = timezone(timedelta(hours=-3))
 
 log = get_logger("context_builder")
 
@@ -142,8 +145,48 @@ async def build_context(
     from app.skills.schedule import get_scheduling_context
     sched_text = await get_scheduling_context(org_id)
 
+    # Current datetime in BRT for the prompt
+    DIAS_SEMANA = ["Segunda-feira", "Terça-feira", "Quarta-feira",
+                   "Quinta-feira", "Sexta-feira", "Sábado", "Domingo"]
+    now_brt = datetime.now(BRT)
+    dia_semana = DIAS_SEMANA[now_brt.weekday()]
+    current_datetime_text = (
+        f"Hoje é {dia_semana}, {now_brt.strftime('%d/%m/%Y')} "
+        f"às {now_brt.strftime('%H:%M')} (horário de Brasília - UTC-3).\n"
+        f"Use essa data como referência para agendamentos. "
+        f"O ano atual é {now_brt.year}."
+    )
+
+    # Fetch previously agreed schedule data from Redis
+    agreed = await get_agreed_schedule(conversation_id)
+    if agreed:
+        parts = []
+        if agreed.get("requested_date"):
+            parts.append(f"Data combinada: {agreed['requested_date']}")
+        if agreed.get("requested_time"):
+            parts.append(f"Horário combinado: {agreed['requested_time']}")
+        if agreed.get("attendee_name"):
+            parts.append(f"Nome confirmado: {agreed['attendee_name']}")
+        if agreed.get("attendee_email"):
+            parts.append(f"Email confirmado: {agreed['attendee_email']}")
+        if agreed.get("participant"):
+            parts.append(f"Participante: {agreed['participant']}")
+        if agreed.get("whatsapp_for_reminders"):
+            parts.append(f"WhatsApp lembretes: {agreed['whatsapp_for_reminders']}")
+        if agreed.get("interest"):
+            parts.append(f"Interesse: {agreed['interest']}")
+        agreed_text = (
+            "DADOS JÁ COMBINADOS COM O LEAD (NÃO pergunte de novo!):\n"
+            + "\n".join(f"  - {p}" for p in parts)
+        )
+        log.info("[CONTEXT] Agreed schedule found for conv=%s: %s", conversation_id, parts)
+    else:
+        agreed_text = ""
+
     # Replace placeholders
     prompt = template.format(
+        current_datetime=current_datetime_text,
+        agreed_schedule=agreed_text,
         agent_name=agent_config.get("agent_name", "Ana"),
         role="assistente de vendas" if agent_type == "sdr" else "assistente de suporte",
         personality=agent_config.get("personality", "Profissional, simpática e objetiva."),

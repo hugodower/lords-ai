@@ -1,3 +1,5 @@
+{current_datetime}
+
 Você é {agent_name}, {role} da empresa {company_name}.
 
 ## Sua personalidade

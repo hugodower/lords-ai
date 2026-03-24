@@ -14,7 +14,7 @@ from app.guards.autonomy_limit import check_autonomy_limit
 from app.integrations import supabase_client as sb
 from app.integrations.chatwoot import chatwoot_client
 from app.integrations.claude_client import generate_response
-from app.memory.redis_store import add_message, get_conversation_history, is_paused
+from app.memory.redis_store import add_message, get_conversation_history, is_paused, save_agreed_schedule
 from app.memory.history import log_interaction
 from app.models.schemas import AgentOutput, ProcessMessageResponse
 from app.skills.business_hours import is_within_business_hours, get_after_hours_response
@@ -313,6 +313,29 @@ class BaseAgent(ABC):
                 skill_used=output.skill_used,
                 agent_type=agent_type,
             )
+
+        # ── Persist agreed schedule data to Redis ──────────────────
+        # Save any schedule fields Claude mentioned, even before the
+        # actual booking — so they survive across message cycles.
+        if output.schedule:
+            agreed_data = {}
+            s = output.schedule
+            if s.requested_date:
+                agreed_data["requested_date"] = s.requested_date
+            if s.requested_time:
+                agreed_data["requested_time"] = s.requested_time
+            if s.attendee_name:
+                agreed_data["attendee_name"] = s.attendee_name
+            if s.attendee_email:
+                agreed_data["attendee_email"] = s.attendee_email
+            if s.participant:
+                agreed_data["participant"] = s.participant
+            if s.whatsapp_for_reminders:
+                agreed_data["whatsapp_for_reminders"] = s.whatsapp_for_reminders
+            if s.interest:
+                agreed_data["interest"] = s.interest
+            if agreed_data:
+                await save_agreed_schedule(conversation_id, agreed_data)
 
         # ── Success: send response ───────────────────────────────────
         action = output.action
