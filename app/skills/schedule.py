@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from app.integrations import supabase_client as sb
 from app.integrations.google_calendar import GoogleCalendarClient
 from app.utils.logger import get_logger
+
+BRT = timezone(timedelta(hours=-3))
 
 log = get_logger("skill:schedule")
 
@@ -88,9 +90,9 @@ async def get_available_slots(org_id: str, days_ahead: int = 7) -> list[dict]:
 
     calendar_id = config.get("google_calendar_id") or "primary"
     min_advance = config.get("min_advance_hours") or 2
-    now = datetime.utcnow()
-    start = now + timedelta(hours=min_advance)
-    end = now + timedelta(days=min(days_ahead, config.get("max_advance_days") or 30))
+    now_brt = datetime.now(BRT)
+    start = now_brt + timedelta(hours=min_advance)
+    end = now_brt + timedelta(days=min(days_ahead, config.get("max_advance_days") or 30))
 
     log.info(
         "[SCHED:SLOTS] Querying free slots — calendar=%s, start=%s, end=%s",
@@ -279,23 +281,24 @@ async def execute_scheduling(
 
     try:
         duration = config.get("slot_duration_minutes", 60)
-        start = datetime.fromisoformat(f"{requested_date}T{requested_time}:00")
+        # Parse as BRT — requested times are always in Brasília timezone
+        start = datetime.fromisoformat(f"{requested_date}T{requested_time}:00").replace(tzinfo=BRT)
 
         # Fix wrong year: Claude's training data may cause it to use past years
-        now = datetime.utcnow()
-        if start.year < now.year:
+        now_brt = datetime.now(BRT)
+        if start.year < now_brt.year:
             log.warning(
                 "[SCHEDULE] Wrong year detected: %d (current=%d) — auto-correcting date from %s to %s",
-                start.year, now.year, requested_date,
-                start.replace(year=now.year).strftime("%Y-%m-%d"),
+                start.year, now_brt.year, requested_date,
+                start.replace(year=now_brt.year).strftime("%Y-%m-%d"),
             )
-            start = start.replace(year=now.year)
+            start = start.replace(year=now_brt.year)
 
-        # Reject dates in the past
-        if start < now:
+        # Reject dates in the past (comparing BRT vs BRT)
+        if start < now_brt:
             log.error(
-                "[SCHEDULE] FAIL — Date is in the past: %s (now=%s)",
-                start.isoformat(), now.isoformat(),
+                "[SCHEDULE] FAIL — Date is in the past: %s (now_brt=%s)",
+                start.isoformat(), now_brt.isoformat(),
             )
             return {
                 "success": False,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -12,6 +12,7 @@ log = get_logger("google_calendar")
 
 BASE_URL = "https://www.googleapis.com/calendar/v3"
 TIMEZONE = "America/Sao_Paulo"
+BRT = timezone(timedelta(hours=-3))
 
 
 class GoogleCalendarClient:
@@ -138,7 +139,11 @@ class GoogleCalendarClient:
         available_end_time: str = "17:00",
         max_slots: int = 8,
     ) -> list[dict]:
-        """Find free time slots using the FreeBusy API."""
+        """Find free time slots using the FreeBusy API.
+
+        All datetimes are handled in BRT (America/Sao_Paulo, UTC-3).
+        ``date_start`` and ``date_end`` should be BRT-aware.
+        """
         log.info(
             "[GCAL:FREEBUSY] get_free_slots — calendar=%s, range=%s to %s, duration=%d min, hours=%s-%s",
             calendar_id, date_start.isoformat(), date_end.isoformat(),
@@ -150,9 +155,11 @@ class GoogleCalendarClient:
             log.error("[GCAL:FREEBUSY] No access token — aborting free slots query")
             return []
 
+        # Send BRT-aware datetimes to Google — isoformat() includes the -03:00 offset
         freebusy_payload = {
-            "timeMin": date_start.isoformat() + "Z",
-            "timeMax": date_end.isoformat() + "Z",
+            "timeMin": date_start.isoformat(),
+            "timeMax": date_end.isoformat(),
+            "timeZone": TIMEZONE,
             "items": [{"id": calendar_id}],
         }
 
@@ -175,21 +182,22 @@ class GoogleCalendarClient:
             log.error("[GCAL:FREEBUSY] FreeBusy EXCEPTION: %s — %s", type(exc).__name__, exc, exc_info=True)
             return []
 
-        # Collect busy periods
+        # Collect busy periods and convert to BRT
         busy_periods: list[tuple[datetime, datetime]] = []
         for cal_id, cal_data in busy_data.get("calendars", {}).items():
             errors = cal_data.get("errors", [])
             if errors:
                 log.error("[GCAL:FREEBUSY] Calendar '%s' errors: %s", cal_id, errors)
             for busy in cal_data.get("busy", []):
-                bs = datetime.fromisoformat(busy["start"].replace("Z", "+00:00")).replace(tzinfo=None)
-                be = datetime.fromisoformat(busy["end"].replace("Z", "+00:00")).replace(tzinfo=None)
+                bs = datetime.fromisoformat(busy["start"].replace("Z", "+00:00")).astimezone(BRT)
+                be = datetime.fromisoformat(busy["end"].replace("Z", "+00:00")).astimezone(BRT)
                 busy_periods.append((bs, be))
 
         log.info("[GCAL:FREEBUSY] Found %d busy periods", len(busy_periods))
 
-        # Generate free slots day by day
+        # Generate free slots day by day — all in BRT
         DAYS_PT = ["Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado", "Domingo"]
+        now_brt = datetime.now(BRT)
         slots: list[dict] = []
         current_date = date_start.date()
         end_date = date_end.date()
@@ -207,11 +215,11 @@ class GoogleCalendarClient:
 
             slot_start = datetime(
                 current_date.year, current_date.month, current_date.day,
-                h_start, m_start,
+                h_start, m_start, tzinfo=BRT,
             )
             day_end = datetime(
                 current_date.year, current_date.month, current_date.day,
-                h_end, m_end,
+                h_end, m_end, tzinfo=BRT,
             )
 
             while slot_start + timedelta(minutes=duration_minutes) <= day_end and len(slots) < max_slots:
@@ -222,7 +230,7 @@ class GoogleCalendarClient:
                         is_free = False
                         break
 
-                if is_free and slot_start > datetime.utcnow():
+                if is_free and slot_start > now_brt:
                     day_name = DAYS_PT[slot_start.weekday()]
                     display = f"{day_name}, {slot_start.strftime('%d/%m')} as {slot_start.strftime('%H:%M')}"
                     slots.append({
@@ -247,7 +255,7 @@ class GoogleCalendarClient:
         attendee_email: Optional[str] = None,
         attendee_phone: Optional[str] = None,
     ) -> Optional[dict]:
-        """Create a calendar event."""
+        """Create a calendar event. start/end should be BRT-aware datetimes."""
         log.info(
             "[GCAL:CREATE] create_event called — calendar=%s, summary='%s', start=%s, end=%s, email=%s, phone=%s",
             calendar_id, summary, start.isoformat(), end.isoformat(), attendee_email, attendee_phone,
@@ -377,7 +385,7 @@ class GoogleCalendarClient:
         if not access_token:
             return []
 
-        now = datetime.utcnow()
+        now = datetime.now(BRT)
         time_max = now + timedelta(hours=hours_ahead)
 
         try:
@@ -386,8 +394,9 @@ class GoogleCalendarClient:
                     f"{BASE_URL}/calendars/{calendar_id}/events",
                     headers={"Authorization": f"Bearer {access_token}"},
                     params={
-                        "timeMin": now.isoformat() + "Z",
-                        "timeMax": time_max.isoformat() + "Z",
+                        "timeMin": now.isoformat(),
+                        "timeMax": time_max.isoformat(),
+                        "timeZone": TIMEZONE,
                         "singleEvents": "true",
                         "orderBy": "startTime",
                     },
