@@ -30,38 +30,8 @@ class GoogleCalendarClient:
             token_data.get("expiry_date") if token_data else "N/A",
         )
 
-    async def _get_access_token(self) -> Optional[str]:
-        """Get valid access token, refreshing if needed."""
-        if not self._token:
-            log.error("[GCAL:TOKEN] _token is empty/None for org %s", self.org_id)
-            return None
-
-        # Check if expired (5 min buffer)
-        expiry = self._token.get("expiry_date", 0)
-        now_ms = datetime.utcnow().timestamp() * 1000
-        remaining_ms = expiry - now_ms
-        remaining_min = remaining_ms / 60_000
-
-        log.info(
-            "[GCAL:TOKEN] Expiry check — expiry_date=%s, now_ms=%s, remaining=%.1f min, expired=%s",
-            expiry, int(now_ms), remaining_min, remaining_ms <= 300_000,
-        )
-
-        if expiry > now_ms + 300_000:
-            access = self._token.get("access_token")
-            log.info(
-                "[GCAL:TOKEN] Token still valid (%.1f min left) — access_token=%s...%s",
-                remaining_min,
-                access[:20] if access else "NONE",
-                access[-10:] if access else "",
-            )
-            return access
-
-        # Need refresh
-        log.warning(
-            "[GCAL:TOKEN] Token expired or expiring soon (%.1f min left) — initiating refresh for org %s",
-            remaining_min, self.org_id,
-        )
+    async def _refresh_token(self) -> Optional[str]:
+        """Force-refresh the access token using the refresh_token."""
         refresh_token = self._token.get("refresh_token")
         if not refresh_token:
             log.error("[GCAL:TOKEN] No refresh_token available for org %s — cannot refresh", self.org_id)
@@ -96,8 +66,9 @@ class GoogleCalendarClient:
 
                 if resp.status_code != 200:
                     log.error(
-                        "[GCAL:TOKEN] Token refresh FAILED — status=%s, body=%s",
-                        resp.status_code, resp.text,
+                        "[GCAL:TOKEN] Token refresh FAILED — status=%s, body=%s. "
+                        "Reautorizacao necessaria para org %s",
+                        resp.status_code, resp.text, self.org_id,
                     )
                     return None
 
@@ -107,17 +78,14 @@ class GoogleCalendarClient:
                     list(new_tokens.keys()), new_tokens.get("expires_in"),
                 )
 
+                now_ms = datetime.now(BRT).timestamp() * 1000
                 self._token["access_token"] = new_tokens["access_token"]
-                self._token["expiry_date"] = int(
-                    datetime.utcnow().timestamp() * 1000
-                ) + (new_tokens.get("expires_in", 3600) * 1000)
+                self._token["expiry_date"] = int(now_ms) + (new_tokens.get("expires_in", 3600) * 1000)
 
-                # Keep refresh_token if Google returned a new one
                 if "refresh_token" in new_tokens:
                     log.info("[GCAL:TOKEN] Google returned new refresh_token — updating")
                     self._token["refresh_token"] = new_tokens["refresh_token"]
 
-                # Persist refreshed token to Supabase
                 from app.integrations.supabase_client import update_scheduling_token
 
                 log.info("[GCAL:TOKEN] Persisting refreshed token to Supabase for org %s ...", self.org_id)
@@ -127,6 +95,44 @@ class GoogleCalendarClient:
         except Exception as exc:
             log.error("[GCAL:TOKEN] Token refresh EXCEPTION: %s — %s", type(exc).__name__, exc, exc_info=True)
             return None
+
+    async def _get_access_token(self, force_refresh: bool = False) -> Optional[str]:
+        """Get valid access token, refreshing if needed or forced."""
+        if not self._token:
+            log.error("[GCAL:TOKEN] _token is empty/None for org %s", self.org_id)
+            return None
+
+        if force_refresh:
+            log.warning("[GCAL:TOKEN] Force refresh requested (401 retry) for org %s", self.org_id)
+            return await self._refresh_token()
+
+        # Check if expired (5 min buffer)
+        expiry = self._token.get("expiry_date", 0)
+        now_ms = datetime.now(BRT).timestamp() * 1000
+        remaining_ms = expiry - now_ms
+        remaining_min = remaining_ms / 60_000
+
+        log.info(
+            "[GCAL:TOKEN] Expiry check — expiry_date=%s, now_ms=%s, remaining=%.1f min, expired=%s",
+            expiry, int(now_ms), remaining_min, remaining_ms <= 300_000,
+        )
+
+        if expiry > now_ms + 300_000:
+            access = self._token.get("access_token")
+            log.info(
+                "[GCAL:TOKEN] Token still valid (%.1f min left) — access_token=%s...%s",
+                remaining_min,
+                access[:20] if access else "NONE",
+                access[-10:] if access else "",
+            )
+            return access
+
+        # Need refresh
+        log.warning(
+            "[GCAL:TOKEN] Token expired or expiring soon (%.1f min left) — initiating refresh for org %s",
+            remaining_min, self.org_id,
+        )
+        return await self._refresh_token()
 
     async def get_free_slots(
         self,
@@ -172,6 +178,21 @@ class GoogleCalendarClient:
                     json=freebusy_payload,
                 )
                 log.info("[GCAL:FREEBUSY] Response — status=%s", resp.status_code)
+
+                # 401/403 → force refresh and retry once
+                if resp.status_code in (401, 403):
+                    log.warning("[GCAL:FREEBUSY] Got %s — forcing token refresh and retrying", resp.status_code)
+                    access_token = await self._get_access_token(force_refresh=True)
+                    if not access_token:
+                        log.error("[GCAL:FREEBUSY] Refresh failed — reautorizacao necessaria para org %s", self.org_id)
+                        return []
+                    resp = await client.post(
+                        f"{BASE_URL}/freeBusy",
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        json=freebusy_payload,
+                    )
+                    log.info("[GCAL:FREEBUSY] Retry response — status=%s", resp.status_code)
+
                 if resp.status_code != 200:
                     log.error("[GCAL:FREEBUSY] FreeBusy FAILED — status=%s, body=%s", resp.status_code, resp.text)
                     return []
@@ -297,6 +318,23 @@ class GoogleCalendarClient:
                 )
                 log.info("[GCAL:CREATE] Response — status=%s", resp.status_code)
 
+                # 401/403 → force refresh and retry once
+                if resp.status_code in (401, 403):
+                    log.warning("[GCAL:CREATE] Got %s — forcing token refresh and retrying", resp.status_code)
+                    access_token = await self._get_access_token(force_refresh=True)
+                    if not access_token:
+                        log.error("[GCAL:CREATE] Refresh failed — reautorizacao necessaria para org %s", self.org_id)
+                        return None
+                    resp = await client.post(
+                        url,
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            "Content-Type": "application/json",
+                        },
+                        json=event_body,
+                    )
+                    log.info("[GCAL:CREATE] Retry response — status=%s", resp.status_code)
+
                 if resp.status_code not in (200, 201):
                     log.error(
                         "[GCAL:CREATE] Create event FAILED — status=%s, body=%s",
@@ -335,16 +373,19 @@ class GoogleCalendarClient:
         if summary:
             update_body["summary"] = summary
 
+        url = f"{BASE_URL}/calendars/{calendar_id}/events/{event_id}"
+        headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.patch(
-                    f"{BASE_URL}/calendars/{calendar_id}/events/{event_id}",
-                    headers={
-                        "Authorization": f"Bearer {access_token}",
-                        "Content-Type": "application/json",
-                    },
-                    json=update_body,
-                )
+                resp = await client.patch(url, headers=headers, json=update_body)
+                if resp.status_code in (401, 403):
+                    log.warning("[GCAL] Update got %s — refreshing token", resp.status_code)
+                    access_token = await self._get_access_token(force_refresh=True)
+                    if not access_token:
+                        return False
+                    headers["Authorization"] = f"Bearer {access_token}"
+                    resp = await client.patch(url, headers=headers, json=update_body)
                 if resp.status_code != 200:
                     log.error("[GCAL] Update event failed: %s", resp.text)
                     return False
@@ -360,12 +401,17 @@ class GoogleCalendarClient:
         if not access_token:
             return False
 
+        url = f"{BASE_URL}/calendars/{calendar_id}/events/{event_id}"
+
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.delete(
-                    f"{BASE_URL}/calendars/{calendar_id}/events/{event_id}",
-                    headers={"Authorization": f"Bearer {access_token}"},
-                )
+                resp = await client.delete(url, headers={"Authorization": f"Bearer {access_token}"})
+                if resp.status_code in (401, 403):
+                    log.warning("[GCAL] Cancel got %s — refreshing token", resp.status_code)
+                    access_token = await self._get_access_token(force_refresh=True)
+                    if not access_token:
+                        return False
+                    resp = await client.delete(url, headers={"Authorization": f"Bearer {access_token}"})
                 if resp.status_code not in (200, 204):
                     log.error("[GCAL] Cancel event failed: %s", resp.text)
                     return False
@@ -387,20 +433,24 @@ class GoogleCalendarClient:
 
         now = datetime.now(BRT)
         time_max = now + timedelta(hours=hours_ahead)
+        params = {
+            "timeMin": now.isoformat(),
+            "timeMax": time_max.isoformat(),
+            "timeZone": TIMEZONE,
+            "singleEvents": "true",
+            "orderBy": "startTime",
+        }
+        url = f"{BASE_URL}/calendars/{calendar_id}/events"
 
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(
-                    f"{BASE_URL}/calendars/{calendar_id}/events",
-                    headers={"Authorization": f"Bearer {access_token}"},
-                    params={
-                        "timeMin": now.isoformat(),
-                        "timeMax": time_max.isoformat(),
-                        "timeZone": TIMEZONE,
-                        "singleEvents": "true",
-                        "orderBy": "startTime",
-                    },
-                )
+                resp = await client.get(url, headers={"Authorization": f"Bearer {access_token}"}, params=params)
+                if resp.status_code in (401, 403):
+                    log.warning("[GCAL] Upcoming got %s — refreshing token", resp.status_code)
+                    access_token = await self._get_access_token(force_refresh=True)
+                    if not access_token:
+                        return []
+                    resp = await client.get(url, headers={"Authorization": f"Bearer {access_token}"}, params=params)
                 if resp.status_code != 200:
                     return []
 
