@@ -151,6 +151,7 @@ async def maybe_update_memory(
     conversation_id: str,
     action: str,
     lead_temperature: str = "cold",
+    last_sentiment: str = "neutral",
 ) -> None:
     """Check if memory should be updated, and do so in background.
 
@@ -178,6 +179,7 @@ async def maybe_update_memory(
             contact_name=contact_name,
             conversation_id=conversation_id,
             lead_temperature=lead_temperature,
+            last_sentiment=last_sentiment,
         )
     )
 
@@ -188,6 +190,7 @@ async def _do_update_memory(
     contact_name: str,
     conversation_id: str,
     lead_temperature: str,
+    last_sentiment: str = "neutral",
 ) -> None:
     """Actually extract and save memory (runs as background task)."""
     try:
@@ -223,6 +226,20 @@ async def _do_update_memory(
         # Truncate summary
         if merged.get("summary") and len(merged["summary"]) > MAX_SUMMARY_LENGTH:
             merged["summary"] = merged["summary"][:MAX_SUMMARY_LENGTH]
+
+        # Save sentiment in metadata
+        meta = merged.get("metadata") or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        if last_sentiment and last_sentiment != "neutral":
+            meta["last_sentiment"] = last_sentiment
+            history_list = meta.get("sentiment_history") or []
+            history_list.append(last_sentiment)
+            meta["sentiment_history"] = history_list[-10:]  # Keep last 10
+        merged["metadata"] = meta
 
         # Save
         merged["last_conversation_id"] = conversation_id

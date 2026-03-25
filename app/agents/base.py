@@ -21,6 +21,7 @@ from app.skills.business_hours import is_within_business_hours, get_after_hours_
 from app.guards.debounce import is_duplicate_response
 from app.services.followup_scheduler import cancel_pending_followups, schedule_followups_after_reply
 from app.services.memory_manager import load_contact_memory, maybe_update_memory
+from app.services.sentiment_analyzer import analyze_sentiment
 from app.skills.handoff import perform_handoff
 from app.utils.logger import get_logger
 from app.utils.phone import normalize_phone
@@ -171,12 +172,66 @@ class BaseAgent(ABC):
             message_text=message,
         )
 
+        # ── Sentiment analysis ────────────────────────────────────
+        sentiment_data = {"sentiment": "neutral", "confidence": 1.0, "tone_adjustment": ""}
+        try:
+            sentiment_data = await analyze_sentiment(message)
+            if sentiment_data["sentiment"] != "neutral":
+                log.info(
+                    "[SENTIMENT] Detectado: %s (confidence: %.2f) conv=%s",
+                    sentiment_data["sentiment"], sentiment_data["confidence"],
+                    conversation_id,
+                )
+        except Exception as sent_err:
+            log.warning("[SENTIMENT] Error analyzing sentiment: %s", sent_err)
+
         # ── Load long-term memory ─────────────────────────────────
         contact_memory = None
         try:
             contact_memory = await load_contact_memory(org_id, contact_phone)
         except Exception as mem_err:
             log.warning("[MEMORY] Error loading contact memory: %s", mem_err)
+
+        # ── Auto-handoff for persistent frustration ───────────────
+        if sentiment_data["sentiment"] == "frustrated":
+            history_check = await get_conversation_history(conversation_id)
+            assistant_msgs = sum(1 for m in history_check if m.get("role") == "assistant")
+            if assistant_msgs >= 2:
+                log.warning(
+                    "[SENTIMENT:ALERT] Lead frustrado após %d interações, sugerindo handoff conv=%s",
+                    assistant_msgs, conversation_id,
+                )
+                await perform_handoff(
+                    conversation_id=conversation_id,
+                    org_id=org_id,
+                    agent_config=agent_config,
+                    contact_name=contact_name,
+                    contact_phone=contact_phone,
+                    reason="Lead demonstrando frustração persistente — transferindo para atendente humano.",
+                )
+                handoff_msg = (
+                    "Entendo sua frustração e peço desculpas pelo inconveniente. "
+                    "Vou te transferir agora para um atendente que pode te ajudar melhor, tudo bem?"
+                )
+                await chatwoot_client.send_message(conversation_id, handoff_msg)
+                await add_message(conversation_id, "assistant", handoff_msg)
+                await log_interaction(
+                    org_id=org_id,
+                    conversation_id=conversation_id,
+                    contact_phone=contact_phone,
+                    contact_name=contact_name,
+                    agent_type=agent_type,
+                    message_role="assistant",
+                    message_text=handoff_msg,
+                    skill_used="sentiment",
+                    action_taken="handoff",
+                )
+                return ProcessMessageResponse(
+                    action="handoff",
+                    message_sent=handoff_msg,
+                    skill_used="sentiment",
+                    agent_type=agent_type,
+                )
 
         # ── Layer 3: Build context ──────────────────────────────────
         try:
@@ -189,6 +244,7 @@ class BaseAgent(ABC):
                 contact_phone=contact_phone,
                 user_message=message,
                 contact_memory=contact_memory,
+                sentiment_data=sentiment_data,
             )
         except Exception as ctx_err:
             log.error("build_context failed: %s", ctx_err)
@@ -504,6 +560,7 @@ class BaseAgent(ABC):
                 conversation_id=conversation_id,
                 action=action,
                 lead_temperature=output.lead_temperature,
+                last_sentiment=sentiment_data.get("sentiment", "neutral"),
             )
         except Exception as mem_err:
             log.warning("[MEMORY] Error triggering memory update: %s", mem_err)

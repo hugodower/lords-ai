@@ -33,6 +33,7 @@ async def build_context(
     contact_phone: str,
     user_message: str,
     contact_memory: Optional[dict] = None,
+    sentiment_data: Optional[dict] = None,
 ) -> str:
     """Build the full system prompt with verified data from Supabase."""
 
@@ -213,10 +214,19 @@ async def build_context(
         if memory_text:
             prompt += memory_text
 
+    # Inject sentiment-based tone adjustment
+    sentiment_label = "neutral"
+    if sentiment_data and sentiment_data.get("sentiment", "neutral") != "neutral":
+        from app.services.sentiment_analyzer import format_sentiment_for_prompt
+        sentiment_text = format_sentiment_for_prompt(sentiment_data)
+        if sentiment_text:
+            prompt += sentiment_text
+        sentiment_label = sentiment_data.get("sentiment", "neutral")
+
     log.info(
         "Context built for %s agent (org=%s, conv=%s) — %d chars | "
         "agent_name=%s | company=%s | products=%d | steps=%d | faq=%d | "
-        "forbidden=%d | history=%d msgs | rag=%d results | scheduling=%s | memory=%s",
+        "forbidden=%d | history=%d msgs | rag=%d results | scheduling=%s | memory=%s | sentiment=%s",
         agent_type, org_id, conversation_id, len(prompt),
         agent_config.get("agent_name", "?"),
         (company.get("company_name") if company else "N/A"),
@@ -228,5 +238,6 @@ async def build_context(
         len(rag_results),
         "yes" if "google_calendar" in sched_text.lower() else "basic",
         "yes" if contact_memory else "no",
+        sentiment_label,
     )
     return prompt
