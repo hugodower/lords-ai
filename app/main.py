@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -15,6 +16,7 @@ from app.guards.debounce import debounce_message
 from app.integrations import supabase_client as sb
 from app.knowledge.rag import index_document, search_knowledge, ping_chroma
 from app.memory.redis_store import is_paused, ping_redis, set_paused
+from app.services.followup_worker import start_worker as start_followup_worker, stop_worker as stop_followup_worker
 from app.models.schemas import (
     AgentsStatusResponse,
     AgentStatusItem,
@@ -37,11 +39,29 @@ AGENTS = {
 }
 
 
+_followup_task: Optional[asyncio.Task] = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _followup_task
     log.info("LORDS-AI starting for org %s", settings.org_id)
     logging.getLogger().setLevel(settings.log_level)
+
+    # Start follow-up worker background task
+    _followup_task = asyncio.create_task(start_followup_worker())
+    log.info("[FOLLOWUP:WORKER] Background task created")
+
     yield
+
+    # Graceful shutdown of follow-up worker
+    stop_followup_worker()
+    if _followup_task and not _followup_task.done():
+        _followup_task.cancel()
+        try:
+            await _followup_task
+        except asyncio.CancelledError:
+            pass
     log.info("LORDS-AI shutting down")
 
 
@@ -359,6 +379,66 @@ async def get_metrics(period: str = Query("today")):
 
     m = await sb.get_metrics(settings.org_id, date_from)
     return MetricsResponse(**m)
+
+
+# ── Debug: Google Calendar ──────────────────────────────────────────
+
+
+# ── Follow-up management ─────────────────────────────────────────────
+
+
+@app.get("/api/v1/followups/pending")
+async def get_followup_pending():
+    """List pending follow-ups for this org."""
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    BRT = _tz(_td(hours=-3))
+    now = _dt.now(BRT).isoformat()
+    # Get all pending (not just due ones)
+    try:
+        _sb = sb.get_supabase()
+        resp = (
+            _sb.table("followup_queue")
+            .select("*")
+            .eq("organization_id", settings.org_id)
+            .eq("status", "pending")
+            .order("scheduled_at")
+            .limit(100)
+            .execute()
+        )
+        return {"pending": resp.data or [], "count": len(resp.data or [])}
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/v1/followups/stats")
+async def get_followup_stats():
+    """Get follow-up statistics for this org."""
+    try:
+        _sb = sb.get_supabase()
+        resp = (
+            _sb.table("followup_queue")
+            .select("status", count="exact")
+            .eq("organization_id", settings.org_id)
+            .execute()
+        )
+        rows = resp.data or []
+        stats = {"pending": 0, "sent": 0, "cancelled": 0, "failed": 0}
+        for row in rows:
+            s = row.get("status", "")
+            if s in stats:
+                stats[s] += 1
+        stats["total"] = sum(stats.values())
+        return stats
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/v1/followups/cancel/{conversation_id}")
+async def cancel_followups(conversation_id: int):
+    """Manually cancel all pending follow-ups for a conversation."""
+    from app.services.followup_scheduler import cancel_pending_followups
+    count = await cancel_pending_followups(conversation_id, reason="manual cancel via API")
+    return {"cancelled": count, "conversation_id": conversation_id}
 
 
 # ── Debug: Google Calendar ──────────────────────────────────────────

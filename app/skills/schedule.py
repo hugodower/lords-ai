@@ -371,6 +371,32 @@ async def execute_scheduling(
             start.isoformat(), end.isoformat(),
         )
 
+        # Schedule booking follow-ups (confirmacao_agendamento + lembrete_reuniao)
+        if conversation_id:
+            try:
+                from app.services.followup_scheduler import (
+                    cancel_pending_followups,
+                    schedule_booking_followups,
+                )
+
+                conv_id_int = int(conversation_id)
+                # Cancel any existing reengagement follow-ups (lead booked!)
+                await cancel_pending_followups(conv_id_int, reason="reunião agendada")
+                # Schedule confirmation + reminder
+                DAYS_PT_SHORT = ["Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado", "Domingo"]
+                display_date = f"{DAYS_PT_SHORT[start.weekday()]}, {start.strftime('%d/%m')}"
+                display_time = start.strftime("%H:%M")
+                await schedule_booking_followups(
+                    org_id=org_id,
+                    conversation_id=conv_id_int,
+                    contact_phone=final_whatsapp,
+                    contact_name=final_name,
+                    meeting_date=display_date,
+                    meeting_time=display_time,
+                )
+            except Exception as fu_err:
+                log.warning("[SCHEDULE] Error scheduling booking follow-ups: %s", fu_err)
+
         return {
             "success": True,
             "event_id": event.get("id"),

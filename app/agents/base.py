@@ -19,6 +19,7 @@ from app.memory.history import log_interaction
 from app.models.schemas import AgentOutput, ProcessMessageResponse
 from app.skills.business_hours import is_within_business_hours, get_after_hours_response
 from app.guards.debounce import is_duplicate_response
+from app.services.followup_scheduler import cancel_pending_followups, schedule_followups_after_reply
 from app.skills.handoff import perform_handoff
 from app.utils.logger import get_logger
 from app.utils.phone import normalize_phone
@@ -147,6 +148,13 @@ class BaseAgent(ABC):
                 skill_used="handoff",
                 agent_type=agent_type,
             )
+
+        # Cancel pending follow-ups (lead responded)
+        try:
+            conv_id_int = int(conversation_id)
+            await cancel_pending_followups(conv_id_int, reason="lead respondeu")
+        except (ValueError, TypeError):
+            log.warning("[FOLLOWUP] Could not parse conversation_id=%s as int", conversation_id)
 
         # Save incoming message to Redis
         await add_message(conversation_id, "user", message)
@@ -477,6 +485,22 @@ class BaseAgent(ABC):
             "Processed message: conv=%s action=%s skill=%s time=%dms tokens=%d",
             conversation_id, action, output.skill_used, elapsed_ms, tokens_used,
         )
+
+        # Schedule follow-ups after Aurora replies (if lead doesn't respond, these will fire)
+        if action not in ("handoff", "blocked", "ignored"):
+            try:
+                conv_id_int = int(conversation_id)
+                await schedule_followups_after_reply(
+                    org_id=org_id,
+                    conversation_id=conv_id_int,
+                    contact_phone=contact_phone,
+                    contact_name=contact_name,
+                    action=action,
+                    lead_temperature=output.lead_temperature,
+                    skill_used=output.skill_used,
+                )
+            except Exception as fu_err:
+                log.warning("[FOLLOWUP] Error scheduling follow-ups: %s", fu_err)
 
         return ProcessMessageResponse(
             action=action,

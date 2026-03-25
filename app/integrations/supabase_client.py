@@ -391,3 +391,199 @@ async def get_org_by_chatwoot_account(account_id: int) -> Optional[str]:
     except Exception as exc:
         log.error("[CONFIG] FAILED to lookup org by chatwoot account %s: %s", account_id, exc)
         return None
+
+
+# ── Follow-up queue ─────────────────────────────────────────────────
+
+
+async def get_followup_config(org_id: str) -> Optional[dict]:
+    """Get follow-up configuration for an organization."""
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("followup_config")
+            .select("*")
+            .eq("organization_id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        if resp and resp.data:
+            log.info("[FOLLOWUP] Loaded followup_config for org=%s", org_id)
+        return resp.data if resp else None
+    except Exception as exc:
+        log.error("[FOLLOWUP] FAILED to load followup_config for org=%s: %s", org_id, exc)
+        return None
+
+
+async def insert_followup(
+    org_id: str,
+    conversation_id: int,
+    contact_phone: str,
+    contact_name: str,
+    template_name: str,
+    template_variables: list,
+    scheduled_at: str,
+    metadata: dict | None = None,
+) -> Optional[dict]:
+    """Insert a new follow-up into the queue."""
+    import json as _json
+
+    sb = get_supabase()
+    try:
+        data = {
+            "organization_id": org_id,
+            "conversation_id": conversation_id,
+            "contact_phone": contact_phone,
+            "contact_name": contact_name,
+            "template_name": template_name,
+            "template_variables": _json.dumps(template_variables),
+            "scheduled_at": scheduled_at,
+            "status": "pending",
+            "metadata": _json.dumps(metadata or {}),
+        }
+        resp = sb.table("followup_queue").insert(data).execute()
+        return resp.data[0] if resp and resp.data else None
+    except Exception as exc:
+        log.error(
+            "[FOLLOWUP] FAILED to insert followup — org=%s conv=%s template=%s: %s",
+            org_id, conversation_id, template_name, exc,
+        )
+        return None
+
+
+async def followup_exists_pending(conversation_id: int, template_name: str) -> bool:
+    """Check if a pending follow-up already exists for this conversation+template."""
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("followup_queue")
+            .select("id", count="exact")
+            .eq("conversation_id", conversation_id)
+            .eq("template_name", template_name)
+            .eq("status", "pending")
+            .execute()
+        )
+        return (resp.count or 0) > 0
+    except Exception as exc:
+        log.error("[FOLLOWUP] Error checking existing followup: %s", exc)
+        return False
+
+
+async def cancel_followups_for_conversation(conversation_id: int) -> int:
+    """Cancel all pending follow-ups for a conversation. Returns count cancelled."""
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("followup_queue")
+            .update({"status": "cancelled"})
+            .eq("conversation_id", conversation_id)
+            .eq("status", "pending")
+            .execute()
+        )
+        count = len(resp.data) if resp and resp.data else 0
+        return count
+    except Exception as exc:
+        log.error("[FOLLOWUP] FAILED to cancel followups for conv %s: %s", conversation_id, exc)
+        return 0
+
+
+async def get_pending_followups(now_iso: str) -> list[dict]:
+    """Get all pending follow-ups that are due (scheduled_at <= now)."""
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("followup_queue")
+            .select("*")
+            .eq("status", "pending")
+            .lte("scheduled_at", now_iso)
+            .order("scheduled_at")
+            .limit(50)
+            .execute()
+        )
+        return resp.data or []
+    except Exception as exc:
+        log.error("[FOLLOWUP] FAILED to get pending followups: %s", exc)
+        return []
+
+
+async def update_followup_status(
+    followup_id: str,
+    status: str,
+    sent_at: str | None = None,
+    error: str | None = None,
+) -> None:
+    """Update the status of a follow-up item."""
+    sb = get_supabase()
+    try:
+        data: dict[str, Any] = {"status": status}
+        if sent_at:
+            data["sent_at"] = sent_at
+        if error:
+            data["metadata"] = _json_merge_error(followup_id, error)
+        sb.table("followup_queue").update(data).eq("id", followup_id).execute()
+    except Exception as exc:
+        log.error("[FOLLOWUP] FAILED to update followup %s to %s: %s", followup_id, status, exc)
+
+
+def _json_merge_error(followup_id: str, error: str) -> str:
+    """Build metadata JSON with error field."""
+    import json as _json
+    return _json.dumps({"error": error})
+
+
+async def get_latest_user_message_time(
+    conversation_id: int, after_timestamp: str
+) -> Optional[str]:
+    """Check if a user message exists for this conversation after the given timestamp."""
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("ai_conversation_logs")
+            .select("created_at")
+            .eq("conversation_id", str(conversation_id))
+            .eq("message_role", "user")
+            .gt("created_at", after_timestamp)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if resp and resp.data:
+            return resp.data[0]["created_at"]
+        return None
+    except Exception as exc:
+        log.error("[FOLLOWUP] Error getting latest user msg for conv %s: %s", conversation_id, exc)
+        return None
+
+
+# ── WhatsApp credentials ────────────────────────────────────────────
+
+
+async def get_whatsapp_credentials(org_id: str) -> Optional[dict]:
+    """Get WhatsApp Cloud API credentials (phone_number_id + access_token) for an org.
+
+    Reads from chatwoot_connections table which stores Meta API tokens.
+    """
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("chatwoot_connections")
+            .select("whatsapp_phone_number_id, whatsapp_access_token")
+            .eq("organization_id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        if resp and resp.data:
+            pid = resp.data.get("whatsapp_phone_number_id")
+            token = resp.data.get("whatsapp_access_token")
+            if pid and token:
+                return {"phone_number_id": pid, "access_token": token}
+            log.warning(
+                "[FOLLOWUP] WhatsApp credentials incomplete for org %s — pid=%s token=%s",
+                org_id, bool(pid), bool(token),
+            )
+        else:
+            log.warning("[FOLLOWUP] No chatwoot_connections found for org %s", org_id)
+        return None
+    except Exception as exc:
+        log.error("[FOLLOWUP] FAILED to get WhatsApp creds for org %s: %s", org_id, exc)
+        return None
