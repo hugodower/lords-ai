@@ -20,6 +20,7 @@ from app.models.schemas import AgentOutput, ProcessMessageResponse
 from app.skills.business_hours import is_within_business_hours, get_after_hours_response
 from app.guards.debounce import is_duplicate_response
 from app.services.followup_scheduler import cancel_pending_followups, schedule_followups_after_reply
+from app.services.memory_manager import load_contact_memory, maybe_update_memory
 from app.skills.handoff import perform_handoff
 from app.utils.logger import get_logger
 from app.utils.phone import normalize_phone
@@ -170,6 +171,13 @@ class BaseAgent(ABC):
             message_text=message,
         )
 
+        # ── Load long-term memory ─────────────────────────────────
+        contact_memory = None
+        try:
+            contact_memory = await load_contact_memory(org_id, contact_phone)
+        except Exception as mem_err:
+            log.warning("[MEMORY] Error loading contact memory: %s", mem_err)
+
         # ── Layer 3: Build context ──────────────────────────────────
         try:
             system_prompt = await build_context(
@@ -180,6 +188,7 @@ class BaseAgent(ABC):
                 contact_name=contact_name,
                 contact_phone=contact_phone,
                 user_message=message,
+                contact_memory=contact_memory,
             )
         except Exception as ctx_err:
             log.error("build_context failed: %s", ctx_err)
@@ -485,6 +494,19 @@ class BaseAgent(ABC):
             "Processed message: conv=%s action=%s skill=%s time=%dms tokens=%d",
             conversation_id, action, output.skill_used, elapsed_ms, tokens_used,
         )
+
+        # Update long-term memory (background task, non-blocking)
+        try:
+            await maybe_update_memory(
+                org_id=org_id,
+                contact_phone=contact_phone,
+                contact_name=contact_name,
+                conversation_id=conversation_id,
+                action=action,
+                lead_temperature=output.lead_temperature,
+            )
+        except Exception as mem_err:
+            log.warning("[MEMORY] Error triggering memory update: %s", mem_err)
 
         # Schedule follow-ups after Aurora replies (if lead doesn't respond, these will fire)
         if action not in ("handoff", "blocked", "ignored"):

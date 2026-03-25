@@ -32,6 +32,7 @@ async def build_context(
     contact_name: str,
     contact_phone: str,
     user_message: str,
+    contact_memory: Optional[dict] = None,
 ) -> str:
     """Build the full system prompt with verified data from Supabase."""
 
@@ -205,10 +206,17 @@ async def build_context(
         deal_stage="Não identificado",
     )
 
+    # Inject long-term contact memory if available
+    if contact_memory:
+        from app.services.memory_manager import format_memory_for_prompt
+        memory_text = format_memory_for_prompt(contact_memory)
+        if memory_text:
+            prompt += memory_text
+
     log.info(
         "Context built for %s agent (org=%s, conv=%s) — %d chars | "
         "agent_name=%s | company=%s | products=%d | steps=%d | faq=%d | "
-        "forbidden=%d | history=%d msgs | rag=%d results | scheduling=%s",
+        "forbidden=%d | history=%d msgs | rag=%d results | scheduling=%s | memory=%s",
         agent_type, org_id, conversation_id, len(prompt),
         agent_config.get("agent_name", "?"),
         (company.get("company_name") if company else "N/A"),
@@ -219,5 +227,6 @@ async def build_context(
         len(history),
         len(rag_results),
         "yes" if "google_calendar" in sched_text.lower() else "basic",
+        "yes" if contact_memory else "no",
     )
     return prompt

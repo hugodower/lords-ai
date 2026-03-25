@@ -587,3 +587,80 @@ async def get_whatsapp_credentials(org_id: str) -> Optional[dict]:
     except Exception as exc:
         log.error("[FOLLOWUP] FAILED to get WhatsApp creds for org %s: %s", org_id, exc)
         return None
+
+
+# ── Contact memory ──────────────────────────────────────────────────
+
+
+async def get_contact_memory(org_id: str, phone_digits: str) -> Optional[dict]:
+    """Get long-term memory for a contact by org + phone (digits only)."""
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("contact_memory")
+            .select("*")
+            .eq("organization_id", org_id)
+            .eq("contact_phone", phone_digits)
+            .maybe_single()
+            .execute()
+        )
+        return resp.data if resp else None
+    except Exception as exc:
+        log.error("[MEMORY] FAILED to get contact_memory for %s: %s", phone_digits, exc)
+        return None
+
+
+async def upsert_contact_memory(org_id: str, phone_digits: str, data: dict) -> None:
+    """Insert or update contact memory (keyed on org + phone)."""
+    import json as _json
+
+    sb = get_supabase()
+    try:
+        row = {
+            "organization_id": org_id,
+            "contact_phone": phone_digits,
+        }
+        for field in (
+            "contact_name", "contact_company", "contact_email",
+            "summary", "qualification_status",
+            "last_conversation_id", "last_interaction_at",
+        ):
+            if field in data and data[field] is not None:
+                row[field] = data[field]
+
+        interests = data.get("interests")
+        if interests is not None:
+            row["interests"] = interests if isinstance(interests, list) else []
+
+        metadata = data.get("metadata")
+        if metadata is not None:
+            row["metadata"] = _json.dumps(metadata) if isinstance(metadata, dict) else metadata
+
+        sb.table("contact_memory").upsert(
+            row,
+            on_conflict="organization_id,contact_phone",
+        ).execute()
+        log.info("[MEMORY] Upserted contact_memory for %s", phone_digits)
+    except Exception as exc:
+        log.error("[MEMORY] FAILED to upsert contact_memory for %s: %s", phone_digits, exc)
+
+
+async def increment_contact_conversations(org_id: str, phone_digits: str) -> None:
+    """Increment total_conversations and update last_interaction_at."""
+    from datetime import datetime, timedelta, timezone
+    BRT = timezone(timedelta(hours=-3))
+    now = datetime.now(BRT).isoformat()
+
+    sb = get_supabase()
+    try:
+        # First check if exists
+        existing = await get_contact_memory(org_id, phone_digits)
+        if existing:
+            total = (existing.get("total_conversations") or 0) + 1
+            sb.table("contact_memory").update({
+                "total_conversations": total,
+                "last_interaction_at": now,
+            }).eq("organization_id", org_id).eq("contact_phone", phone_digits).execute()
+        # If no existing row, memory will be created later by memory_manager
+    except Exception as exc:
+        log.error("[MEMORY] FAILED to increment conversations for %s: %s", phone_digits, exc)

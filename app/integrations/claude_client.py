@@ -45,6 +45,27 @@ async def generate_response(
     return text, tokens
 
 
+async def generate_extraction(
+    prompt: str,
+    max_tokens: int = 300,
+) -> tuple[str, int]:
+    """Call Claude Haiku for cheap structured extraction (memory summaries).
+
+    Uses claude-haiku-4-5-20251001 to minimize cost.
+    """
+    client = get_claude()
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=max_tokens,
+        temperature=0.0,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = response.content[0].text
+    tokens = response.usage.input_tokens + response.usage.output_tokens
+    log.info("Haiku extraction: %d tokens", tokens)
+    return text, tokens
+
+
 async def classify_intent(message: str) -> str:
     """Quick intent classification using Claude (max 50 tokens).
 
