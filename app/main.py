@@ -199,6 +199,7 @@ async def chatwoot_webhook(request: Request):
             or (conversation.get("meta", {}).get("sender", {}).get("name"))
             or ""
         )
+        chatwoot_contact_id = str(sender.get("id", ""))
 
         log.info(
             "[WEBHOOK] Dados extraídos: account_id=%s conv=%s phone=%s name=%s",
@@ -249,6 +250,7 @@ async def chatwoot_webhook(request: Request):
                 contact_phone=contact_phone,
                 contact_name=contact_name,
                 message=combined_message,
+                chatwoot_contact_id=chatwoot_contact_id,
             )
             log.info(
                 "[WEBHOOK] Debounced result: conv=%s action=%s agent=%s",

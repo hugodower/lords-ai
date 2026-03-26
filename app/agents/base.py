@@ -22,7 +22,7 @@ from app.guards.debounce import is_duplicate_response
 from app.services.followup_scheduler import cancel_pending_followups, schedule_followups_after_reply
 from app.services.memory_manager import load_contact_memory, maybe_update_memory
 from app.services.sentiment_analyzer import analyze_sentiment
-from app.services.pipeline_manager import update_stage, add_label_to_chatwoot
+from app.services.pipeline_manager import update_stage, add_label_to_chatwoot, ensure_contact_and_deal
 from app.services.conversation_resolver import resolve_conversation, schedule_resolve
 from app.skills.handoff import perform_handoff
 from app.utils.logger import get_logger
@@ -47,6 +47,7 @@ class BaseAgent(ABC):
         contact_phone: str,
         contact_name: str,
         message: str,
+        chatwoot_contact_id: str = "",
     ) -> ProcessMessageResponse:
         """Main processing pipeline with all 7 guard layers."""
         start_time = time.time()
@@ -230,7 +231,7 @@ class BaseAgent(ABC):
                 )
                 # Pipeline: move to negociacao + resolve (frustrated handoff)
                 try:
-                    await update_stage(org_id, contact_phone, conversation_id, "em_negociacao", contact_name)
+                    await update_stage(org_id, contact_phone, conversation_id, "em_negociacao", contact_name, chatwoot_contact_id)
                     await resolve_conversation(org_id, conversation_id, "handoff_frustrado")
                 except Exception as _pe:
                     log.warning("[PIPELINE] Error on frustrated handoff: %s", _pe)
@@ -540,21 +541,22 @@ class BaseAgent(ABC):
         # ── Pipeline management & conversation resolution ──────────
         try:
             if action == "schedule":
-                await update_stage(org_id, contact_phone, conversation_id, "reuniao_agendada", contact_name)
+                await update_stage(org_id, contact_phone, conversation_id, "reuniao_agendada", contact_name, chatwoot_contact_id)
                 schedule_resolve(org_id, conversation_id, 2, "reuniao_agendada")
             elif action == "handoff":
-                await update_stage(org_id, contact_phone, conversation_id, "em_negociacao", contact_name)
+                await update_stage(org_id, contact_phone, conversation_id, "em_negociacao", contact_name, chatwoot_contact_id)
             elif output.lead_temperature == "hot":
-                await update_stage(org_id, contact_phone, conversation_id, "lead_quente", contact_name)
+                await update_stage(org_id, contact_phone, conversation_id, "lead_quente", contact_name, chatwoot_contact_id)
             elif output.lead_temperature == "warm":
-                await update_stage(org_id, contact_phone, conversation_id, "qualificado", contact_name)
+                await update_stage(org_id, contact_phone, conversation_id, "qualificado", contact_name, chatwoot_contact_id)
             else:
-                # First contact or continue — ensure deal exists with novo_lead
-                await update_stage(org_id, contact_phone, conversation_id, "novo_lead", contact_name)
+                # First contact or continue — ensure contact+deal exist
+                # Does NOT downgrade existing deals (only adds novo_lead on NEW deals)
+                await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id)
 
             # CRM-driven stage move (if Claude specified a stage explicitly)
             if output.crm_updates and output.crm_updates.stage:
-                await update_stage(org_id, contact_phone, conversation_id, output.crm_updates.stage, contact_name)
+                await update_stage(org_id, contact_phone, conversation_id, output.crm_updates.stage, contact_name, chatwoot_contact_id)
             if output.crm_updates and output.crm_updates.tags:
                 for tag in output.crm_updates.tags:
                     await add_label_to_chatwoot(org_id, conversation_id, tag)
