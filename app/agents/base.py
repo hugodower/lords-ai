@@ -22,6 +22,8 @@ from app.guards.debounce import is_duplicate_response
 from app.services.followup_scheduler import cancel_pending_followups, schedule_followups_after_reply
 from app.services.memory_manager import load_contact_memory, maybe_update_memory
 from app.services.sentiment_analyzer import analyze_sentiment
+from app.services.pipeline_manager import move_deal_to_stage, add_label_to_chatwoot
+from app.services.conversation_resolver import resolve_conversation, schedule_resolve
 from app.skills.handoff import perform_handoff
 from app.utils.logger import get_logger
 from app.utils.phone import normalize_phone
@@ -226,6 +228,12 @@ class BaseAgent(ABC):
                     skill_used="sentiment",
                     action_taken="handoff",
                 )
+                # Pipeline: move to negociacao + resolve (frustrated handoff)
+                try:
+                    await move_deal_to_stage(org_id, contact_phone, "negociacao")
+                    await resolve_conversation(org_id, conversation_id, "handoff_frustrado")
+                except Exception as _pe:
+                    log.warning("[PIPELINE] Error on frustrated handoff: %s", _pe)
                 return ProcessMessageResponse(
                     action="handoff",
                     message_sent=handoff_msg,
@@ -528,6 +536,29 @@ class BaseAgent(ABC):
                 await sb.update_deal_ai_fields(org_id, contact_phone, agent_type)
             except Exception as crm_err:
                 log.warning("CRM update failed: %s", crm_err)
+
+        # ── Pipeline management & conversation resolution ──────────
+        try:
+            if action == "schedule":
+                await move_deal_to_stage(org_id, contact_phone, "agendado")
+                await add_label_to_chatwoot(org_id, conversation_id, "reuniao-agendada")
+                schedule_resolve(org_id, conversation_id, 2, "reuniao_agendada")
+            elif action == "handoff":
+                await move_deal_to_stage(org_id, contact_phone, "negociacao")
+            elif output.lead_temperature == "hot":
+                await move_deal_to_stage(org_id, contact_phone, "oportunidade")
+                await add_label_to_chatwoot(org_id, conversation_id, "lead-quente")
+            elif output.lead_temperature == "warm":
+                await move_deal_to_stage(org_id, contact_phone, "qualificado")
+
+            # CRM-driven stage move (if Claude specified a stage explicitly)
+            if output.crm_updates and output.crm_updates.stage:
+                await move_deal_to_stage(org_id, contact_phone, output.crm_updates.stage)
+            if output.crm_updates and output.crm_updates.tags:
+                for tag in output.crm_updates.tags:
+                    await add_label_to_chatwoot(org_id, conversation_id, tag)
+        except Exception as pipe_err:
+            log.warning("[PIPELINE] Pipeline/resolve error: %s", pipe_err)
 
         # ── Layer 7: Log ─────────────────────────────────────────────
         await log_interaction(

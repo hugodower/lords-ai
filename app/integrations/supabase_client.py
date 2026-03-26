@@ -664,3 +664,146 @@ async def increment_contact_conversations(org_id: str, phone_digits: str) -> Non
         # If no existing row, memory will be created later by memory_manager
     except Exception as exc:
         log.error("[MEMORY] FAILED to increment conversations for %s: %s", phone_digits, exc)
+
+
+# ── Chatwoot connection (full) ─────────────────────────────────────
+
+
+async def get_chatwoot_connection(org_id: str) -> Optional[dict]:
+    """Get full Chatwoot connection details for an org.
+
+    May include: chatwoot_account_id, api_access_token, base_url,
+    whatsapp_phone_number_id, whatsapp_access_token.
+    """
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("chatwoot_connections")
+            .select("*")
+            .eq("organization_id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        if resp and resp.data:
+            log.info("[PIPELINE] Loaded chatwoot_connection for org=%s", org_id)
+        return resp.data if resp else None
+    except Exception as exc:
+        log.error("[PIPELINE] FAILED to get chatwoot_connection for org=%s: %s", org_id, exc)
+        return None
+
+
+# ── Pipeline management ────────────────────────────────────────────
+
+
+async def get_pipeline_stages(org_id: str, pipeline_id: str = None) -> list[dict]:
+    """Get pipeline stages ordered by position.
+
+    If pipeline_id is None, uses the org's first pipeline.
+    """
+    sb = get_supabase()
+    try:
+        if not pipeline_id:
+            pipe_resp = (
+                sb.table("pipelines")
+                .select("id")
+                .eq("organization_id", org_id)
+                .order("created_at")
+                .limit(1)
+                .execute()
+            )
+            if not pipe_resp or not pipe_resp.data:
+                log.warning("[PIPELINE] No pipeline found for org=%s", org_id)
+                return []
+            pipeline_id = pipe_resp.data[0]["id"]
+
+        resp = (
+            sb.table("pipeline_stages")
+            .select("id, name, position, pipeline_id")
+            .eq("pipeline_id", pipeline_id)
+            .order("position")
+            .execute()
+        )
+        stages = resp.data or []
+        log.info(
+            "[PIPELINE] Loaded %d stages for pipeline=%s org=%s",
+            len(stages), pipeline_id, org_id,
+        )
+        return stages
+    except Exception as exc:
+        log.error("[PIPELINE] FAILED to get stages for org=%s: %s", org_id, exc)
+        return []
+
+
+async def get_deal_by_contact_phone(org_id: str, contact_phone: str) -> Optional[dict]:
+    """Find the most recent deal for a contact by phone number."""
+    sb = get_supabase()
+    try:
+        contact_resp = (
+            sb.table("contacts")
+            .select("id")
+            .eq("organization_id", org_id)
+            .eq("phone", contact_phone)
+            .maybe_single()
+            .execute()
+        )
+        if not contact_resp or not contact_resp.data:
+            log.info("[PIPELINE] No contact for phone=%s org=%s", contact_phone, org_id)
+            return None
+
+        contact_id = contact_resp.data["id"]
+
+        deal_resp = (
+            sb.table("deals")
+            .select("id, title, stage_id, pipeline_id, status, value")
+            .eq("organization_id", org_id)
+            .eq("contact_id", contact_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if deal_resp and deal_resp.data:
+            return deal_resp.data[0]
+
+        log.info("[PIPELINE] No deal for contact_id=%s org=%s", contact_id, org_id)
+        return None
+    except Exception as exc:
+        log.error("[PIPELINE] FAILED to get deal by phone=%s: %s", contact_phone, exc)
+        return None
+
+
+async def update_deal_stage(deal_id: str, stage_id: str) -> bool:
+    """Move a deal to a different pipeline stage."""
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("deals")
+            .update({"stage_id": stage_id})
+            .eq("id", deal_id)
+            .execute()
+        )
+        success = bool(resp and resp.data)
+        if success:
+            log.info("[PIPELINE] Deal %s moved to stage %s", deal_id, stage_id)
+        return success
+    except Exception as exc:
+        log.error("[PIPELINE] FAILED to update deal %s stage: %s", deal_id, exc)
+        return False
+
+
+async def update_deal_lost(deal_id: str) -> bool:
+    """Mark a deal as lost."""
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("deals")
+            .update({"status": "lost"})
+            .eq("id", deal_id)
+            .execute()
+        )
+        success = bool(resp and resp.data)
+        if success:
+            log.info("[PIPELINE] Deal %s marked as lost", deal_id)
+        return success
+    except Exception as exc:
+        log.error("[PIPELINE] FAILED to mark deal %s as lost: %s", deal_id, exc)
+        return False

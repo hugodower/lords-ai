@@ -72,6 +72,22 @@ async def _process_single(item: dict) -> None:
         fid, conv_id, template_name, contact_phone,
     )
 
+    # Handle resolve timeout (special entry, not a real template)
+    if template_name == "__resolve_timeout":
+        if await _lead_responded_since(conv_id, item["created_at"]):
+            await sb.update_followup_status(fid, "cancelled")
+            log.info("[RESOLVE] Timeout cancelled — lead responded (conv=%s)", conv_id)
+            return
+
+        from app.services.conversation_resolver import resolve_conversation
+        from app.services.pipeline_manager import move_deal_to_stage
+
+        await resolve_conversation(org_id, str(conv_id), "timeout_sem_resposta")
+        await move_deal_to_stage(org_id, contact_phone, "perdido")
+        await sb.update_followup_status(fid, "sent", sent_at=datetime.now(BRT).isoformat())
+        log.info("[RESOLVE] Timeout resolution executed for conv=%s", conv_id)
+        return
+
     # Safety check: verify lead hasn't responded since this was scheduled
     if await _lead_responded_since(conv_id, item["created_at"]):
         await sb.update_followup_status(fid, "cancelled")
@@ -130,6 +146,19 @@ async def _process_single(item: dict) -> None:
             "[FOLLOWUP:SUCCESS] Template %s enviado para conv %s (%s) — wamid=%s",
             template_name, conv_id, contact_phone, result.get("wamid"),
         )
+        # After reativacao_7d, schedule timeout resolve (3 days)
+        if template_name == "reativacao_7d":
+            try:
+                from app.services.conversation_resolver import schedule_resolve_via_queue
+                await schedule_resolve_via_queue(
+                    org_id=org_id,
+                    conversation_id=conv_id,
+                    contact_phone=contact_phone,
+                    delay_minutes=3 * 24 * 60,
+                    reason="timeout_sem_resposta",
+                )
+            except Exception as resolve_err:
+                log.warning("[RESOLVE] Failed to queue timeout resolve: %s", resolve_err)
     else:
         error = result.get("error", "unknown")
         await sb.update_followup_status(fid, "failed", error=error)
