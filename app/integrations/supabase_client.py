@@ -692,6 +692,27 @@ async def get_chatwoot_connection(org_id: str) -> Optional[dict]:
         return None
 
 
+# ── Cached Chatwoot connection ────────────────────────────────────
+
+import time as _time
+
+_chatwoot_conn_cache: dict[str, tuple[Optional[dict], float]] = {}
+_CHATWOOT_CACHE_TTL = 300  # 5 minutes
+
+
+async def get_chatwoot_connection_cached(org_id: str) -> Optional[dict]:
+    """Cached version of get_chatwoot_connection (TTL 5 min)."""
+    now = _time.time()
+    if org_id in _chatwoot_conn_cache:
+        conn, ts = _chatwoot_conn_cache[org_id]
+        if now - ts < _CHATWOOT_CACHE_TTL:
+            return conn
+
+    conn = await get_chatwoot_connection(org_id)
+    _chatwoot_conn_cache[org_id] = (conn, now)
+    return conn
+
+
 # ── Pipeline management ────────────────────────────────────────────
 
 

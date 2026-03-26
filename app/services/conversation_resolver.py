@@ -25,7 +25,7 @@ REASONS = {
 
 async def _get_chatwoot_config(org_id: str) -> tuple[str, int, dict]:
     """Get Chatwoot base_url, account_id, and headers for an org."""
-    conn = await sb.get_chatwoot_connection(org_id)
+    conn = await sb.get_chatwoot_connection_cached(org_id)
 
     base_url = settings.chatwoot_url.rstrip("/")
     account_id = settings.chatwoot_account_id

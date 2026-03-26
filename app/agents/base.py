@@ -22,7 +22,7 @@ from app.guards.debounce import is_duplicate_response
 from app.services.followup_scheduler import cancel_pending_followups, schedule_followups_after_reply
 from app.services.memory_manager import load_contact_memory, maybe_update_memory
 from app.services.sentiment_analyzer import analyze_sentiment
-from app.services.pipeline_manager import update_stage, add_label_to_chatwoot, ensure_contact_and_deal, swap_chatwoot_label
+from app.services.pipeline_manager import update_stage, add_label_to_chatwoot, ensure_contact_and_deal, swap_chatwoot_label, set_priority
 from app.services.conversation_resolver import resolve_conversation, schedule_resolve
 from app.skills.handoff import perform_handoff
 from app.utils.logger import get_logger
@@ -91,7 +91,7 @@ class BaseAgent(ABC):
             if behavior == "silent":
                 return ProcessMessageResponse(action="ignored", skill_used="business_hours")
             # Send after-hours message
-            await chatwoot_client.send_message(conversation_id, after_msg)
+            await chatwoot_client.send_message(conversation_id, after_msg, org_id=org_id)
             await log_interaction(
                 org_id=org_id,
                 conversation_id=conversation_id,
@@ -216,7 +216,7 @@ class BaseAgent(ABC):
                     "Entendo sua frustração e peço desculpas pelo inconveniente. "
                     "Vou te transferir agora para um atendente que pode te ajudar melhor, tudo bem?"
                 )
-                await chatwoot_client.send_message(conversation_id, handoff_msg)
+                await chatwoot_client.send_message(conversation_id, handoff_msg, org_id=org_id)
                 await add_message(conversation_id, "assistant", handoff_msg)
                 await log_interaction(
                     org_id=org_id,
@@ -372,7 +372,7 @@ class BaseAgent(ABC):
                 extra_info=output.summary,
             )
             # Still send the last message before handoff
-            await chatwoot_client.send_message(conversation_id, output.text)
+            await chatwoot_client.send_message(conversation_id, output.text, org_id=org_id)
             await add_message(conversation_id, "assistant", output.text)
             await log_interaction(
                 org_id=org_id,
@@ -421,6 +421,14 @@ class BaseAgent(ABC):
 
         # ── Success: send response ───────────────────────────────────
         action = output.action
+
+        # FIX 8: Validate consistency action ↔ temperature
+        if action == "schedule" and output.lead_temperature != "hot":
+            log.info("[PIPELINE:OVERRIDE] action=schedule but temp=%s, forcing hot", output.lead_temperature)
+            output.lead_temperature = "hot"
+        if action == "handoff" and output.lead_temperature == "cold":
+            log.info("[PIPELINE:OVERRIDE] action=handoff but temp=cold, forcing warm")
+            output.lead_temperature = "warm"
 
         # Log full Claude output for debugging action routing
         log.info(
@@ -513,7 +521,7 @@ class BaseAgent(ABC):
 
         # Handle handoff requested by the agent
         if action == "handoff":
-            await chatwoot_client.send_message(conversation_id, output.text)
+            await chatwoot_client.send_message(conversation_id, output.text, org_id=org_id)
             await add_message(conversation_id, "assistant", output.text)
             await perform_handoff(
                 conversation_id=conversation_id,
@@ -526,7 +534,7 @@ class BaseAgent(ABC):
             )
         else:
             try:
-                await chatwoot_client.send_message(conversation_id, output.text)
+                await chatwoot_client.send_message(conversation_id, output.text, org_id=org_id)
             except Exception as send_err:
                 log.warning("Chatwoot send failed (conv=%s): %s", conversation_id, send_err)
             await add_message(conversation_id, "assistant", output.text)
@@ -540,25 +548,41 @@ class BaseAgent(ABC):
 
         # ── Pipeline management & conversation resolution ──────────
         try:
+            log.info(
+                "[PIPELINE:TRIGGER] conv=%s action='%s' temp='%s' crm_stage='%s' crm_tags=%s",
+                conversation_id, action, output.lead_temperature,
+                output.crm_updates.stage if output.crm_updates else None,
+                output.crm_updates.tags if output.crm_updates else [],
+            )
             if action == "schedule":
+                log.info("[PIPELINE:TRIGGER] → calling update_stage('reuniao_agendada') for conv %s", conversation_id)
                 await update_stage(org_id, contact_phone, conversation_id, "reuniao_agendada", contact_name, chatwoot_contact_id)
-                schedule_resolve(org_id, conversation_id, 2, "reuniao_agendada")
+                schedule_resolve(org_id, conversation_id, 30, "reuniao_agendada")
             elif action == "handoff":
+                log.info("[PIPELINE:TRIGGER] → calling update_stage('em_negociacao') for conv %s", conversation_id)
                 await update_stage(org_id, contact_phone, conversation_id, "em_negociacao", contact_name, chatwoot_contact_id)
             elif output.lead_temperature in ("hot", "warm"):
+                log.info("[PIPELINE:TRIGGER] → calling update_stage('qualificado') for conv %s (temp=%s)", conversation_id, output.lead_temperature)
                 await update_stage(org_id, contact_phone, conversation_id, "qualificado", contact_name, chatwoot_contact_id)
             else:
-                # Ensure contact+deal exist; only adds novo_lead on NEW deals
+                log.info("[PIPELINE:TRIGGER] → calling ensure_contact_and_deal() for conv %s (temp=%s)", conversation_id, output.lead_temperature)
                 await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id)
 
             # CRM-driven stage move (if Claude specified a stage explicitly)
             if output.crm_updates and output.crm_updates.stage:
+                log.info("[PIPELINE:TRIGGER] → CRM override: update_stage('%s') for conv %s", output.crm_updates.stage, conversation_id)
                 await update_stage(org_id, contact_phone, conversation_id, output.crm_updates.stage, contact_name, chatwoot_contact_id)
             if output.crm_updates and output.crm_updates.tags:
                 for tag in output.crm_updates.tags:
                     await add_label_to_chatwoot(org_id, conversation_id, tag)
         except Exception as pipe_err:
-            log.warning("[PIPELINE] Pipeline/resolve error: %s", pipe_err)
+            log.warning("[PIPELINE] Pipeline/resolve error: %s", pipe_err, exc_info=True)
+
+        # ── Set conversation priority based on sentiment ──────────
+        try:
+            await set_priority(org_id, conversation_id, sentiment_data.get("sentiment", "neutral"))
+        except Exception as prio_err:
+            log.warning("[PIPELINE:PRIORITY] Error: %s", prio_err)
 
         # ── Layer 7: Log ─────────────────────────────────────────────
         await log_interaction(

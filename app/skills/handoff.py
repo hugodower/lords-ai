@@ -80,7 +80,7 @@ async def perform_handoff(
 
     try:
         # Send private note with summary
-        await chatwoot_client.send_private_note(conversation_id, summary)
+        await chatwoot_client.send_private_note(conversation_id, summary, org_id=org_id)
 
         # Assign to human agent if configured
         if handoff_agent_id:
