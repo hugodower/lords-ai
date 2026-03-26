@@ -1,4 +1,7 @@
-"""Pipeline manager — auto-move deals through CRM stages based on Aurora's actions."""
+"""Pipeline manager — auto-move deals through CRM stages based on Aurora's actions.
+
+Creates contacts and deals automatically when they don't exist yet.
+"""
 from __future__ import annotations
 
 import re
@@ -16,9 +19,10 @@ log = get_logger("pipeline")
 STAGE_PATTERNS = {
     "qualificado": [r"qualificad", r"qualified"],
     "oportunidade": [r"oportunidad", r"opportunity"],
-    "agendado": [r"agendad", r"agenda", r"scheduled", r"meeting"],
+    "agendado": [r"agendad", r"agenda", r"scheduled", r"meeting", r"reuni"],
     "negociacao": [r"negocia", r"negotiat"],
     "perdido": [r"perdid", r"lost", r"perda"],
+    "ganho": [r"ganh", r"won", r"fechad", r"converted"],
 }
 
 # Position-based fallback (0-indexed)
@@ -29,13 +33,29 @@ POSITION_FALLBACK = {
     "negociacao": 4,
 }
 
+# Label → stage mapping
+LABEL_TO_STAGE = {
+    "novo_lead": "primeiro_contato",
+    "novo-lead": "primeiro_contato",
+    "qualificado": "qualificado",
+    "lead_quente": "oportunidade",
+    "lead-quente": "oportunidade",
+    "reuniao_agendada": "agendado",
+    "reuniao-agendada": "agendado",
+    "em_negociacao": "negociacao",
+    "em-negociacao": "negociacao",
+    "fechou": "ganho",
+    "perdido": "perdido",
+}
+
 
 def _find_stage(stages: list[dict], target: str) -> Optional[dict]:
     """Find a stage by name pattern match, falling back to position.
 
     Args:
         stages: Pipeline stages ordered by position.
-        target: Stage key (primeiro_contato, qualificado, oportunidade, agendado, negociacao, perdido).
+        target: Stage key (primeiro_contato, qualificado, oportunidade,
+                agendado, negociacao, perdido, ganho).
     """
     if not stages:
         return None
@@ -44,15 +64,13 @@ def _find_stage(stages: list[dict], target: str) -> Optional[dict]:
     if target == "primeiro_contato":
         return stages[0]
 
-    # Last stage shortcut
+    # Last stage shortcut for perdido
     if target == "perdido":
-        # Try name match first
         for stage in stages:
             name = (stage.get("name") or "").lower()
             for pattern in STAGE_PATTERNS.get("perdido", []):
                 if re.search(pattern, name, re.IGNORECASE):
                     return stage
-        # Fallback: last stage
         return stages[-1]
 
     # Name match
@@ -71,27 +89,109 @@ def _find_stage(stages: list[dict], target: str) -> Optional[dict]:
     return None
 
 
+async def ensure_deal_exists(
+    org_id: str,
+    contact_phone: str,
+    contact_name: str = "",
+) -> Optional[dict]:
+    """Find or create contact + deal. Returns the deal dict or None.
+
+    1. Find contact by phone (multiple formats)
+    2. If not found, create contact
+    3. Find deal for that contact
+    4. If not found, create deal in first stage of default pipeline
+    """
+    # ── Step 1: Find or create contact ─────────────────────────────
+    contact = await sb.find_contact_by_phone(org_id, contact_phone)
+
+    if not contact:
+        contact = await sb.create_contact(
+            org_id=org_id,
+            name=contact_name or "Sem nome",
+            phone=contact_phone,
+            source="whatsapp",
+        )
+        if not contact:
+            log.error(
+                "[PIPELINE] Could not create contact for phone=%s org=%s",
+                contact_phone, org_id,
+            )
+            return None
+
+    contact_id = contact["id"]
+
+    # ── Step 2: Find existing deal ─────────────────────────────────
+    supabase = sb.get_supabase()
+    try:
+        deal_resp = (
+            supabase.table("deals")
+            .select("id, stage_id, pipeline_id, status, value")
+            .eq("organization_id", org_id)
+            .eq("contact_id", contact_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if deal_resp and deal_resp.data:
+            return deal_resp.data[0]
+    except Exception as exc:
+        log.error("[PIPELINE] Error querying deals for contact=%s: %s", contact_id, exc)
+
+    # ── Step 3: Create deal in first stage ─────────────────────────
+    stages = await sb.get_pipeline_stages(org_id)
+    if not stages:
+        log.warning(
+            "[PIPELINE] No pipeline/stages for org=%s — cannot create deal",
+            org_id,
+        )
+        return None
+
+    first_stage = stages[0]
+    pipeline_id = first_stage["pipeline_id"]
+    stage_id = first_stage["id"]
+    stage_name = first_stage.get("name", "?")
+
+    deal = await sb.create_deal(
+        org_id=org_id,
+        contact_id=contact_id,
+        pipeline_id=pipeline_id,
+        stage_id=stage_id,
+    )
+
+    if deal:
+        display_name = contact_name or contact.get("name", contact_phone)
+        log.info(
+            "[PIPELINE:CREATE] Deal criado para %s (%s) na etapa '%s'",
+            display_name, contact_phone, stage_name,
+        )
+
+    return deal
+
+
 async def move_deal_to_stage(
     org_id: str,
     contact_phone: str,
     target_stage: str,
+    contact_name: str = "",
 ) -> bool:
-    """Move a deal to the target pipeline stage.
+    """Move a deal to the target pipeline stage, creating contact+deal if needed.
 
     Args:
         org_id: Organization ID.
         contact_phone: Contact's phone number.
         target_stage: Stage key (primeiro_contato, qualificado, oportunidade,
-                      agendado, negociacao, perdido).
+                      agendado, negociacao, perdido, ganho).
+        contact_name: Contact name (used when creating new contact/deal).
 
-    Returns True if deal was moved successfully.
+    Returns True if deal was moved (or created) successfully.
     """
     try:
-        deal = await sb.get_deal_by_contact_phone(org_id, contact_phone)
+        # Ensure deal exists (creates contact + deal if needed)
+        deal = await ensure_deal_exists(org_id, contact_phone, contact_name)
         if not deal:
-            log.info(
-                "[PIPELINE] No deal found for phone=%s org=%s — skipping move to '%s'",
-                contact_phone, org_id, target_stage,
+            log.warning(
+                "[PIPELINE] Could not find/create deal for phone=%s org=%s",
+                contact_phone, org_id,
             )
             return False
 
@@ -102,7 +202,7 @@ async def move_deal_to_stage(
         stages = await sb.get_pipeline_stages(org_id, pipeline_id)
         if not stages:
             log.warning(
-                "[PIPELINE] No stages found for pipeline=%s org=%s",
+                "[PIPELINE] No stages for pipeline=%s org=%s",
                 pipeline_id, org_id,
             )
             return False
@@ -120,16 +220,23 @@ async def move_deal_to_stage(
 
         if current_stage_id == target_stage_id:
             log.info(
-                "[PIPELINE] Deal %s already in stage '%s' — skipping",
+                "[PIPELINE] Deal %s already in '%s' — skipping",
                 deal_id, target.get("name"),
             )
             return True
 
+        # Find current stage name for the log
+        current_name = "?"
+        for s in stages:
+            if s["id"] == current_stage_id:
+                current_name = s.get("name", "?")
+                break
+
         success = await sb.update_deal_stage(deal_id, target_stage_id)
         if success:
             log.info(
-                "[PIPELINE] Deal %s moved to '%s' (id=%s) — phone=%s",
-                deal_id, target.get("name"), target_stage_id, contact_phone,
+                "[PIPELINE:MOVE] Deal %s movido de '%s' para '%s' — phone=%s",
+                deal_id, current_name, target.get("name"), contact_phone,
             )
             if target_stage == "perdido":
                 await sb.update_deal_lost(deal_id)

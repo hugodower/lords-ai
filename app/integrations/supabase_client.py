@@ -734,27 +734,140 @@ async def get_pipeline_stages(org_id: str, pipeline_id: str = None) -> list[dict
         return []
 
 
+async def find_contact_by_phone(org_id: str, phone: str) -> Optional[dict]:
+    """Find contact trying multiple phone formats (exact, +/- prefix, suffix)."""
+    import re as _re
+
+    sb = get_supabase()
+    clean = phone.strip().replace("-", "").replace(" ", "")
+
+    try:
+        # 1) Exact match
+        resp = (
+            sb.table("contacts")
+            .select("id, name, phone")
+            .eq("organization_id", org_id)
+            .eq("phone", clean)
+            .maybe_single()
+            .execute()
+        )
+        if resp and resp.data:
+            return resp.data
+
+        # 2) Try without/with + prefix
+        alt = clean[1:] if clean.startswith("+") else "+" + clean
+        resp = (
+            sb.table("contacts")
+            .select("id, name, phone")
+            .eq("organization_id", org_id)
+            .eq("phone", alt)
+            .maybe_single()
+            .execute()
+        )
+        if resp and resp.data:
+            return resp.data
+
+        # 3) Suffix match (last 10-11 digits)
+        digits = _re.sub(r"\D", "", clean)
+        if len(digits) >= 10:
+            suffix = digits[-11:] if len(digits) >= 11 else digits[-10:]
+            resp = (
+                sb.table("contacts")
+                .select("id, name, phone")
+                .eq("organization_id", org_id)
+                .ilike("phone", f"%{suffix}%")
+                .limit(1)
+                .execute()
+            )
+            if resp and resp.data:
+                return resp.data[0]
+
+        return None
+    except Exception as exc:
+        log.error("[PIPELINE] FAILED to find contact by phone=%s: %s", phone, exc)
+        return None
+
+
+async def create_contact(
+    org_id: str, name: str, phone: str, source: str = "whatsapp"
+) -> Optional[dict]:
+    """Create a new contact in the CRM."""
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("contacts")
+            .insert({
+                "organization_id": org_id,
+                "name": name or "Sem nome",
+                "phone": phone,
+                "status": "lead",
+                "last_channel": source,
+            })
+            .execute()
+        )
+        if resp and resp.data:
+            contact = resp.data[0]
+            log.info(
+                "[PIPELINE:CREATE_CONTACT] Contato criado: %s (%s) — id=%s",
+                name, phone, contact["id"],
+            )
+            return contact
+        return None
+    except Exception as exc:
+        log.error("[PIPELINE] FAILED to create contact %s (%s): %s", name, phone, exc)
+        return None
+
+
+async def create_deal(
+    org_id: str,
+    contact_id: str,
+    pipeline_id: str,
+    stage_id: str,
+) -> Optional[dict]:
+    """Create a new deal in the CRM pipeline."""
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("deals")
+            .insert({
+                "organization_id": org_id,
+                "contact_id": contact_id,
+                "pipeline_id": pipeline_id,
+                "stage_id": stage_id,
+                "value": 0,
+                "status": "open",
+            })
+            .execute()
+        )
+        if resp and resp.data:
+            deal = resp.data[0]
+            log.info(
+                "[PIPELINE:CREATE] Deal criado — id=%s contact=%s stage=%s",
+                deal["id"], contact_id, stage_id,
+            )
+            return deal
+        return None
+    except Exception as exc:
+        log.error(
+            "[PIPELINE] FAILED to create deal for contact=%s: %s",
+            contact_id, exc,
+        )
+        return None
+
+
 async def get_deal_by_contact_phone(org_id: str, contact_phone: str) -> Optional[dict]:
     """Find the most recent deal for a contact by phone number."""
     sb = get_supabase()
     try:
-        contact_resp = (
-            sb.table("contacts")
-            .select("id")
-            .eq("organization_id", org_id)
-            .eq("phone", contact_phone)
-            .maybe_single()
-            .execute()
-        )
-        if not contact_resp or not contact_resp.data:
-            log.info("[PIPELINE] No contact for phone=%s org=%s", contact_phone, org_id)
+        contact = await find_contact_by_phone(org_id, contact_phone)
+        if not contact:
             return None
 
-        contact_id = contact_resp.data["id"]
+        contact_id = contact["id"]
 
         deal_resp = (
             sb.table("deals")
-            .select("id, title, stage_id, pipeline_id, status, value")
+            .select("id, stage_id, pipeline_id, status, value")
             .eq("organization_id", org_id)
             .eq("contact_id", contact_id)
             .order("created_at", desc=True)

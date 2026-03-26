@@ -230,7 +230,7 @@ class BaseAgent(ABC):
                 )
                 # Pipeline: move to negociacao + resolve (frustrated handoff)
                 try:
-                    await move_deal_to_stage(org_id, contact_phone, "negociacao")
+                    await move_deal_to_stage(org_id, contact_phone, "negociacao", contact_name)
                     await resolve_conversation(org_id, conversation_id, "handoff_frustrado")
                 except Exception as _pe:
                     log.warning("[PIPELINE] Error on frustrated handoff: %s", _pe)
@@ -540,20 +540,20 @@ class BaseAgent(ABC):
         # ── Pipeline management & conversation resolution ──────────
         try:
             if action == "schedule":
-                await move_deal_to_stage(org_id, contact_phone, "agendado")
+                await move_deal_to_stage(org_id, contact_phone, "agendado", contact_name)
                 await add_label_to_chatwoot(org_id, conversation_id, "reuniao-agendada")
                 schedule_resolve(org_id, conversation_id, 2, "reuniao_agendada")
             elif action == "handoff":
-                await move_deal_to_stage(org_id, contact_phone, "negociacao")
+                await move_deal_to_stage(org_id, contact_phone, "negociacao", contact_name)
             elif output.lead_temperature == "hot":
-                await move_deal_to_stage(org_id, contact_phone, "oportunidade")
+                await move_deal_to_stage(org_id, contact_phone, "oportunidade", contact_name)
                 await add_label_to_chatwoot(org_id, conversation_id, "lead-quente")
             elif output.lead_temperature == "warm":
-                await move_deal_to_stage(org_id, contact_phone, "qualificado")
+                await move_deal_to_stage(org_id, contact_phone, "qualificado", contact_name)
 
             # CRM-driven stage move (if Claude specified a stage explicitly)
             if output.crm_updates and output.crm_updates.stage:
-                await move_deal_to_stage(org_id, contact_phone, output.crm_updates.stage)
+                await move_deal_to_stage(org_id, contact_phone, output.crm_updates.stage, contact_name)
             if output.crm_updates and output.crm_updates.tags:
                 for tag in output.crm_updates.tags:
                     await add_label_to_chatwoot(org_id, conversation_id, tag)
