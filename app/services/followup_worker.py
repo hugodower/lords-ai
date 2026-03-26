@@ -80,10 +80,10 @@ async def _process_single(item: dict) -> None:
             return
 
         from app.services.conversation_resolver import resolve_conversation
-        from app.services.pipeline_manager import move_deal_to_stage
+        from app.services.pipeline_manager import update_stage
 
         await resolve_conversation(org_id, str(conv_id), "timeout_sem_resposta")
-        await move_deal_to_stage(org_id, contact_phone, "perdido", contact_name)
+        await update_stage(org_id, contact_phone, str(conv_id), "perdido", contact_name)
         await sb.update_followup_status(fid, "sent", sent_at=datetime.now(BRT).isoformat())
         log.info("[RESOLVE] Timeout resolution executed for conv=%s", conv_id)
         return
