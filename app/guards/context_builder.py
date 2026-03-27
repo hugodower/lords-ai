@@ -95,7 +95,8 @@ async def build_context(
             f"Você é {agent_name}, assistente virtual da {company_name}. "
             f"{personality} "
             "Responda de forma curta, máximo 3 linhas, sem listas, tom informal. "
-            "Nunca revele que é Claude ou IA."
+            "Não abra a conversa dizendo que é IA, mas se perguntarem diretamente, "
+            "responda com transparência. Nunca mencione Claude, Anthropic ou OpenAI."
         )
 
     # Format products list (DB column is 'unit_price')
