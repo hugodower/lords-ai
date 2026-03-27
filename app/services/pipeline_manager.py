@@ -85,9 +85,20 @@ async def ensure_contact_exists(
         contact = await sb.find_contact_by_chatwoot_id(org_id, chatwoot_contact_id)
         if contact:
             log.info(
-                "[PIPELINE:CONTACT:DEDUP] chatwoot_id=%s (id=%s)",
-                chatwoot_contact_id, contact["id"],
+                "[PIPELINE:CONTACT:DEDUP] chatwoot_id=%s (id=%s, phone=%s)",
+                chatwoot_contact_id, contact["id"], contact.get("phone"),
             )
+            # Cross-channel merge: if this contact has no phone but another
+            # contact with the same name DOES have a phone, prefer that one
+            if name and name.strip() and not contact.get("phone"):
+                better = await sb.find_contacts_by_name(org_id, name.strip())
+                for b in better:
+                    if b.get("phone") and b["id"] != contact["id"]:
+                        log.info(
+                            "[PIPELINE:CONTACT:MERGE] chatwoot_id=%s → merging into contact %s (has phone=%s)",
+                            chatwoot_contact_id, b["id"], b.get("phone"),
+                        )
+                        return b
             updates: dict = {}
             if digits and not contact.get("phone"):
                 updates["phone"] = digits
@@ -115,6 +126,14 @@ async def ensure_contact_exists(
                 await sb.update_contact_fields(contact["id"], updates)
             return contact
         elif len(contacts) > 1:
+            # Multiple contacts with same name — prefer the one with phone
+            with_phone = [c for c in contacts if c.get("phone")]
+            if len(with_phone) == 1:
+                log.info(
+                    "[PIPELINE:CONTACT:DEDUP_PHONE_PRIORITY] Found '%s' with phone among %d namesakes (id=%s)",
+                    name, len(contacts), with_phone[0]["id"],
+                )
+                return with_phone[0]
             log.warning(
                 "[PIPELINE:CONTACT:AMBIGUOUS] Multiple contacts named '%s' (%d found), creating new",
                 name, len(contacts),

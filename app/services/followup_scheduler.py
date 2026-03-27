@@ -52,10 +52,13 @@ async def schedule_followups_after_reply(
         )
         return
 
-    # Load org follow-up config
+    # Load org follow-up config — default to enabled if no config row exists
     config = await sb.get_followup_config(org_id)
-    if not config or not config.get("followup_enabled", True):
-        log.info("[FOLLOWUP:SCHEDULE] Follow-ups disabled for org %s", org_id)
+    if not config:
+        log.info("[FOLLOWUP:SCHEDULE] No followup_config for org %s, using defaults (enabled)", org_id)
+        config = {}
+    if not config.get("followup_enabled", True):
+        log.info("[FOLLOWUP:SCHEDULE] Follow-ups explicitly disabled for org %s", org_id)
         return
 
     now = datetime.now(BRT)

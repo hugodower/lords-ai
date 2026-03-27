@@ -203,9 +203,8 @@ async def chatwoot_webhook(request: Request):
         account_id = account.get("id") or payload.get("account_id")
         conversation_id = str(conversation.get("id", ""))
 
-        # Resolve channel from inbox type
+        # Resolve channel from inbox type — with multiple fallbacks
         channel_type = inbox.get("channel_type", "")
-        channel = CHANNEL_MAP.get(channel_type, "WhatsApp")
 
         contact_phone = (
             sender.get("phone_number")
@@ -218,6 +217,29 @@ async def chatwoot_webhook(request: Request):
             or ""
         )
         chatwoot_contact_id = str(sender.get("id", ""))
+
+        # Fallback 1: detect from sender phone/identifier
+        if not channel_type:
+            sender_phone = (sender.get("phone_number") or "").strip()
+            sender_identifier = sender.get("identifier") or ""
+            if sender_phone:
+                channel_type = "Channel::Api"  # WhatsApp uses phone
+            elif sender_identifier:
+                if "instagram" in str(sender_identifier).lower():
+                    channel_type = "Channel::Instagram"
+                else:
+                    channel_type = "Channel::FacebookPage"
+
+        # Fallback 2: detect from conversation.additional_attributes
+        if not channel_type:
+            additional = conversation.get("additional_attributes") or {}
+            conv_type = additional.get("type", "")
+            if conv_type == "instagram_direct_message":
+                channel_type = "Channel::Instagram"
+            elif conv_type == "facebook":
+                channel_type = "Channel::FacebookPage"
+
+        channel = CHANNEL_MAP.get(channel_type, "Desconhecido")
 
         log.info(
             "[WEBHOOK] Dados extraídos: account_id=%s conv=%s phone=%s name=%s channel=%s (inbox_type=%s)",

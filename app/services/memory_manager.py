@@ -277,6 +277,31 @@ async def _do_update_memory(
         log.error("[MEMORY:SAVE] Error saving memory for %s: %s", contact_phone, exc, exc_info=True)
 
 
+def _parse_json_response(text: str) -> Optional[dict]:
+    """Extract JSON from a response that may have markdown fences or extra text."""
+    # 1) Direct parse
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    # 2) Strip markdown fences
+    cleaned = re.sub(r"```json\s*", "", text)
+    cleaned = re.sub(r"```\s*", "", cleaned).strip()
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+    # 3) Find first { ... last }
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            return json.loads(text[start : end + 1])
+        except Exception:
+            pass
+    return None
+
+
 async def _extract_memory(history: list[dict]) -> Optional[dict]:
     """Use Claude Haiku to extract structured info from conversation history."""
     from app.integrations.claude_client import generate_extraction
@@ -306,17 +331,12 @@ async def _extract_memory(history: list[dict]) -> Optional[dict]:
 
     try:
         raw, _ = await generate_extraction(prompt)
-        # Parse JSON from response
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            # Try to extract JSON from response
-            match = re.search(r"\{[\s\S]*\}", raw)
-            if match:
-                data = json.loads(match.group())
-            else:
-                log.warning("[MEMORY:EXTRACT] Could not parse JSON from Haiku response")
-                return None
+        data = _parse_json_response(raw)
+        if data is None:
+            log.warning(
+                "[MEMORY:EXTRACT] Could not parse JSON from Haiku response: %s",
+                raw[:200],
+            )
         return data
     except Exception as exc:
         log.error("[MEMORY:EXTRACT] Haiku extraction failed: %s", exc)
