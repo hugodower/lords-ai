@@ -56,9 +56,9 @@ async def ensure_contact_exists(
     chatwoot_contact_id: str = "",
     channel: str = "WhatsApp",
 ) -> Optional[dict]:
-    """Find or create contact with deduplication.
+    """Find or create contact with cross-channel deduplication.
 
-    Search order: phone → chatwoot_contact_id/chatwoot_id.
+    Search order: phone → chatwoot_contact_id → exact name match.
     If found by alternate criteria, updates missing phone/chatwoot_id.
     """
     digits = _normalize_phone(phone)
@@ -97,7 +97,30 @@ async def ensure_contact_exists(
                 await sb.update_contact_fields(contact["id"], updates)
             return contact
 
-    # 3) Not found — create
+    # 3) Search by exact name (last resort dedup)
+    if name and name.strip():
+        contacts = await sb.find_contacts_by_name(org_id, name.strip())
+        if len(contacts) == 1:
+            contact = contacts[0]
+            log.info(
+                "[PIPELINE:CONTACT:DEDUP_BY_NAME] Found '%s' by name match (id=%s)",
+                name, contact["id"],
+            )
+            updates = {}
+            if digits and not contact.get("phone"):
+                updates["phone"] = digits
+            if chatwoot_contact_id and not contact.get("chatwoot_contact_id"):
+                updates["chatwoot_contact_id"] = str(chatwoot_contact_id)
+            if updates:
+                await sb.update_contact_fields(contact["id"], updates)
+            return contact
+        elif len(contacts) > 1:
+            log.warning(
+                "[PIPELINE:CONTACT:AMBIGUOUS] Multiple contacts named '%s' (%d found), creating new",
+                name, len(contacts),
+            )
+
+    # 4) Not found — create
     log.info("[PIPELINE:CONTACT:CREATE] Creating new contact: name='%s' phone='%s' channel='%s'", name, digits, channel)
     contact = await sb.create_contact(
         org_id=org_id,
@@ -115,12 +138,29 @@ async def ensure_contact_exists(
 async def ensure_deal_exists(
     org_id: str,
     contact_id: str,
+    contact_name: str = "",
 ) -> tuple[Optional[dict], bool]:
     """Find or create deal for contact. Returns (deal, is_new)."""
     deal = await sb.find_deal_for_contact(org_id, contact_id)
     if deal:
         log.info("[PIPELINE:DEAL:FOUND] deal=%s contact=%s status=%s", deal["id"], contact_id, deal.get("status"))
         return deal, False
+
+    # Check if another contact with the same name has an open deal
+    if contact_name and contact_name.strip():
+        try:
+            contacts = await sb.find_contacts_by_name(org_id, contact_name.strip())
+            for c in contacts:
+                if c["id"] != contact_id:
+                    alt_deal = await sb.find_deal_for_contact(org_id, c["id"])
+                    if alt_deal:
+                        log.info(
+                            "[PIPELINE:DEAL:FOUND_BY_NAME] Deal %s found via name match '%s' (alt_contact=%s)",
+                            alt_deal["id"], contact_name, c["id"],
+                        )
+                        return alt_deal, False
+        except Exception as exc:
+            log.warning("[PIPELINE:DEAL:NAME_SEARCH_ERROR] %s", exc)
 
     stages = await sb.get_pipeline_stages(org_id)
     if not stages:
@@ -346,7 +386,7 @@ async def update_stage(
         return False
 
     # Ensure deal exists
-    deal, _ = await ensure_deal_exists(org_id, contact["id"])
+    deal, _ = await ensure_deal_exists(org_id, contact["id"], contact_name=contact_name)
     if not deal:
         log.error("[PIPELINE:UPDATE_STAGE] Could not find/create deal for contact=%s", contact["id"])
         return False
@@ -374,7 +414,7 @@ async def ensure_contact_and_deal(
         if not contact:
             return
 
-        deal, is_new = await ensure_deal_exists(org_id, contact["id"])
+        deal, is_new = await ensure_deal_exists(org_id, contact["id"], contact_name=contact_name)
 
         if is_new and conversation_id:
             await swap_chatwoot_label(org_id, conversation_id, "novo_lead")

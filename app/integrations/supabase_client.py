@@ -879,6 +879,25 @@ async def find_contact_by_chatwoot_id(org_id: str, chatwoot_id: str) -> Optional
         return None
 
 
+async def find_contacts_by_name(org_id: str, name: str) -> list[dict]:
+    """Find contacts by exact name (case-insensitive) in the org."""
+    if not name or not name.strip():
+        return []
+    sb = get_supabase()
+    cols = "id, name, phone, email, chatwoot_contact_id"
+    try:
+        resp = (
+            sb.table("contacts").select(cols)
+            .eq("organization_id", org_id)
+            .ilike("name", name.strip())
+            .limit(10).execute()
+        )
+        return resp.data if resp and resp.data else []
+    except Exception as exc:
+        log.error("[PIPELINE] FAILED to find contacts by name='%s': %s", name, exc)
+        return []
+
+
 async def update_contact_fields(contact_id: str, fields: dict) -> bool:
     """Update specific fields on a contact."""
     sb = get_supabase()
