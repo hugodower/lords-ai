@@ -849,7 +849,7 @@ async def find_contact_by_phone(org_id: str, phone: str) -> Optional[dict]:
 
 
 async def find_contact_by_chatwoot_id(org_id: str, chatwoot_id: str) -> Optional[dict]:
-    """Find contact by chatwoot_contact_id or chatwoot_id column."""
+    """Find contact by chatwoot_contact_id column."""
     if not chatwoot_id:
         return None
     sb = get_supabase()
@@ -864,18 +864,9 @@ async def find_contact_by_chatwoot_id(org_id: str, chatwoot_id: str) -> Optional
         )
         if resp and resp.data:
             return resp.data[0]
-        # Try chatwoot_id column
-        resp = (
-            sb.table("contacts").select(cols)
-            .eq("organization_id", org_id)
-            .eq("chatwoot_id", cid)
-            .limit(1).execute()
-        )
-        if resp and resp.data:
-            return resp.data[0]
         return None
     except Exception as exc:
-        log.error("[PIPELINE] FAILED to find contact by chatwoot_id=%s: %s", cid, exc)
+        log.error("[PIPELINE] FAILED to find contact by chatwoot_contact_id=%s: %s", cid, exc)
         return None
 
 
