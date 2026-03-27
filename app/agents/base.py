@@ -48,10 +48,16 @@ class BaseAgent(ABC):
         contact_name: str,
         message: str,
         chatwoot_contact_id: str = "",
+        channel: str = "WhatsApp",
     ) -> ProcessMessageResponse:
         """Main processing pipeline with all 7 guard layers."""
         start_time = time.time()
         agent_type = self.get_agent_type()
+
+        log.info(
+            "[CHANNEL] Conv %s: channel=%s (phone=%s, chatwoot_id=%s)",
+            conversation_id, channel, bool(contact_phone), chatwoot_contact_id,
+        )
 
         # Load agent config
         agent_config = await sb.get_agent_config(org_id, agent_type)
@@ -78,12 +84,23 @@ class BaseAgent(ABC):
                     allowed.add(normalize_phone(p.strip()))
 
             caller = normalize_phone(contact_phone) if contact_phone else ""
-            if caller not in allowed:
+            if caller and caller not in allowed:
+                # WhatsApp contact not in allowlist
                 log.info(
                     "[SANDBOX] Phone %s not in allowed list, ignoring silently",
                     contact_phone,
                 )
                 return ProcessMessageResponse(action="ignored", error="Sandbox: phone not allowed")
+            elif not caller and not chatwoot_contact_id:
+                # No phone AND no chatwoot_id — block
+                log.info("[SANDBOX] No phone and no chatwoot_id, ignoring")
+                return ProcessMessageResponse(action="ignored", error="Sandbox: no identifier")
+            elif not caller and chatwoot_contact_id:
+                # Non-WhatsApp channel with chatwoot_id — allow through sandbox
+                log.info(
+                    "[SANDBOX] Non-WhatsApp channel (%s), chatwoot_id=%s, allowing",
+                    channel, chatwoot_contact_id,
+                )
 
         # ── Layer 0: Business hours ──────────────────────────────────
         if not await is_within_business_hours(org_id):
@@ -191,7 +208,7 @@ class BaseAgent(ABC):
         # ── Load long-term memory ─────────────────────────────────
         contact_memory = None
         try:
-            contact_memory = await load_contact_memory(org_id, contact_phone)
+            contact_memory = await load_contact_memory(org_id, contact_phone, chatwoot_contact_id)
         except Exception as mem_err:
             log.warning("[MEMORY] Error loading contact memory: %s", mem_err)
 
@@ -231,7 +248,7 @@ class BaseAgent(ABC):
                 )
                 # Pipeline: move to negociacao + resolve (frustrated handoff)
                 try:
-                    await update_stage(org_id, contact_phone, conversation_id, "em_negociacao", contact_name, chatwoot_contact_id)
+                    await update_stage(org_id, contact_phone, conversation_id, "em_negociacao", contact_name, chatwoot_contact_id, channel=channel)
                     await resolve_conversation(org_id, conversation_id, "handoff_frustrado")
                 except Exception as _pe:
                     log.warning("[PIPELINE] Error on frustrated handoff: %s", _pe)
@@ -254,6 +271,7 @@ class BaseAgent(ABC):
                 user_message=message,
                 contact_memory=contact_memory,
                 sentiment_data=sentiment_data,
+                channel=channel,
             )
         except Exception as ctx_err:
             log.error("build_context failed: %s", ctx_err)
@@ -556,22 +574,22 @@ class BaseAgent(ABC):
             )
             if action == "schedule":
                 log.info("[PIPELINE:TRIGGER] → calling update_stage('reuniao_agendada') for conv %s", conversation_id)
-                await update_stage(org_id, contact_phone, conversation_id, "reuniao_agendada", contact_name, chatwoot_contact_id)
+                await update_stage(org_id, contact_phone, conversation_id, "reuniao_agendada", contact_name, chatwoot_contact_id, channel=channel)
                 schedule_resolve(org_id, conversation_id, 30, "reuniao_agendada")
             elif action == "handoff":
                 log.info("[PIPELINE:TRIGGER] → calling update_stage('em_negociacao') for conv %s", conversation_id)
-                await update_stage(org_id, contact_phone, conversation_id, "em_negociacao", contact_name, chatwoot_contact_id)
+                await update_stage(org_id, contact_phone, conversation_id, "em_negociacao", contact_name, chatwoot_contact_id, channel=channel)
             elif output.lead_temperature in ("hot", "warm"):
                 log.info("[PIPELINE:TRIGGER] → calling update_stage('qualificado') for conv %s (temp=%s)", conversation_id, output.lead_temperature)
-                await update_stage(org_id, contact_phone, conversation_id, "qualificado", contact_name, chatwoot_contact_id)
+                await update_stage(org_id, contact_phone, conversation_id, "qualificado", contact_name, chatwoot_contact_id, channel=channel)
             else:
                 log.info("[PIPELINE:TRIGGER] → calling ensure_contact_and_deal() for conv %s (temp=%s)", conversation_id, output.lead_temperature)
-                await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id)
+                await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id, channel=channel)
 
             # CRM-driven stage move (if Claude specified a stage explicitly)
             if output.crm_updates and output.crm_updates.stage:
                 log.info("[PIPELINE:TRIGGER] → CRM override: update_stage('%s') for conv %s", output.crm_updates.stage, conversation_id)
-                await update_stage(org_id, contact_phone, conversation_id, output.crm_updates.stage, contact_name, chatwoot_contact_id)
+                await update_stage(org_id, contact_phone, conversation_id, output.crm_updates.stage, contact_name, chatwoot_contact_id, channel=channel)
             if output.crm_updates and output.crm_updates.tags:
                 for tag in output.crm_updates.tags:
                     await add_label_to_chatwoot(org_id, conversation_id, tag)
@@ -616,6 +634,7 @@ class BaseAgent(ABC):
                 action=action,
                 lead_temperature=output.lead_temperature,
                 last_sentiment=sentiment_data.get("sentiment", "neutral"),
+                chatwoot_contact_id=chatwoot_contact_id,
             )
         except Exception as mem_err:
             log.warning("[MEMORY] Error triggering memory update: %s", mem_err)
@@ -632,6 +651,8 @@ class BaseAgent(ABC):
                     action=action,
                     lead_temperature=output.lead_temperature,
                     skill_used=output.skill_used,
+                    channel=channel,
+                    chatwoot_contact_id=chatwoot_contact_id,
                 )
             except Exception as fu_err:
                 log.warning("[FOLLOWUP] Error scheduling follow-ups: %s", fu_err)

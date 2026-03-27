@@ -37,15 +37,20 @@ def _phone_digits(phone: str) -> str:
 # ── Load ────────────────────────────────────────────────────────────
 
 
-async def load_contact_memory(org_id: str, contact_phone: str) -> Optional[dict]:
-    """Load existing memory for a contact. Returns None if first contact."""
+async def load_contact_memory(
+    org_id: str, contact_phone: str, chatwoot_contact_id: str = "",
+) -> Optional[dict]:
+    """Load existing memory for a contact. Returns None if first contact.
+
+    Falls back to chatwoot_contact_id when phone is empty (non-WhatsApp channels).
+    """
     phone = _phone_digits(contact_phone)
-    if not phone:
+    if not phone and not chatwoot_contact_id:
         return None
 
-    memory = await sb.get_contact_memory(org_id, phone)
+    memory = await sb.get_contact_memory(org_id, phone, chatwoot_contact_id)
     if not memory:
-        log.info("[MEMORY:LOAD] Sem memória para %s (primeiro contato)", contact_phone)
+        log.info("[MEMORY:LOAD] Sem memória para %s (primeiro contato)", contact_phone or f"cw:{chatwoot_contact_id}")
         return None
 
     # Check staleness — reset to cold if > 90 days
@@ -73,7 +78,7 @@ async def load_contact_memory(org_id: str, contact_phone: str) -> Optional[dict]
     )
 
     # Increment conversations count and update last_interaction_at
-    await sb.increment_contact_conversations(org_id, phone)
+    await sb.increment_contact_conversations(org_id, phone, chatwoot_contact_id)
 
     return memory
 
@@ -152,6 +157,7 @@ async def maybe_update_memory(
     action: str,
     lead_temperature: str = "cold",
     last_sentiment: str = "neutral",
+    chatwoot_contact_id: str = "",
 ) -> None:
     """Check if memory should be updated, and do so in background.
 
@@ -180,6 +186,7 @@ async def maybe_update_memory(
             conversation_id=conversation_id,
             lead_temperature=lead_temperature,
             last_sentiment=last_sentiment,
+            chatwoot_contact_id=chatwoot_contact_id,
         )
     )
 
@@ -191,11 +198,12 @@ async def _do_update_memory(
     conversation_id: str,
     lead_temperature: str,
     last_sentiment: str = "neutral",
+    chatwoot_contact_id: str = "",
 ) -> None:
     """Actually extract and save memory (runs as background task)."""
     try:
         phone = _phone_digits(contact_phone)
-        if not phone:
+        if not phone and not chatwoot_contact_id:
             return
 
         # Get conversation history
@@ -214,7 +222,7 @@ async def _do_update_memory(
             extracted["qualification_status"] = lead_temperature
 
         # Load existing memory for merge
-        existing = await sb.get_contact_memory(org_id, phone)
+        existing = await sb.get_contact_memory(org_id, phone, chatwoot_contact_id)
 
         # Merge
         merged = _merge_memory(existing, extracted)
@@ -245,7 +253,7 @@ async def _do_update_memory(
         merged["last_conversation_id"] = conversation_id
         merged["last_interaction_at"] = datetime.now(BRT).isoformat()
 
-        await sb.upsert_contact_memory(org_id, phone, merged)
+        await sb.upsert_contact_memory(org_id, phone, merged, chatwoot_contact_id)
 
         old_status = existing.get("qualification_status", "new") if existing else "new"
         new_status = merged.get("qualification_status", "cold")

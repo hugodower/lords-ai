@@ -592,33 +592,71 @@ async def get_whatsapp_credentials(org_id: str) -> Optional[dict]:
 # ── Contact memory ──────────────────────────────────────────────────
 
 
-async def get_contact_memory(org_id: str, phone_digits: str) -> Optional[dict]:
-    """Get long-term memory for a contact by org + phone (digits only)."""
+async def get_contact_memory(
+    org_id: str, phone_digits: str, chatwoot_contact_id: str = "",
+) -> Optional[dict]:
+    """Get long-term memory for a contact by org + phone (digits only).
+
+    Falls back to chatwoot_contact_id (cw: prefix) when phone is empty.
+    """
     sb = get_supabase()
     try:
-        resp = (
-            sb.table("contact_memory")
-            .select("*")
-            .eq("organization_id", org_id)
-            .eq("contact_phone", phone_digits)
-            .maybe_single()
-            .execute()
-        )
-        return resp.data if resp else None
+        # 1) Try by phone first
+        if phone_digits:
+            resp = (
+                sb.table("contact_memory")
+                .select("*")
+                .eq("organization_id", org_id)
+                .eq("contact_phone", phone_digits)
+                .maybe_single()
+                .execute()
+            )
+            if resp and resp.data:
+                return resp.data
+
+        # 2) Fallback: try by chatwoot_contact_id (cw: prefix)
+        if chatwoot_contact_id:
+            cw_key = f"cw:{chatwoot_contact_id}"
+            resp = (
+                sb.table("contact_memory")
+                .select("*")
+                .eq("organization_id", org_id)
+                .eq("contact_phone", cw_key)
+                .maybe_single()
+                .execute()
+            )
+            if resp and resp.data:
+                return resp.data
+
+        return None
     except Exception as exc:
-        log.error("[MEMORY] FAILED to get contact_memory for %s: %s", phone_digits, exc)
+        log.error("[MEMORY] FAILED to get contact_memory for %s: %s", phone_digits or f"cw:{chatwoot_contact_id}", exc)
         return None
 
 
-async def upsert_contact_memory(org_id: str, phone_digits: str, data: dict) -> None:
-    """Insert or update contact memory (keyed on org + phone)."""
+async def upsert_contact_memory(
+    org_id: str, phone_digits: str, data: dict,
+    chatwoot_contact_id: str = "",
+) -> None:
+    """Insert or update contact memory (keyed on org + phone).
+
+    Uses cw:{chatwoot_contact_id} as key when phone is empty.
+    """
     import json as _json
+
+    # Resolve the memory key: phone or cw: prefix
+    memory_key = phone_digits
+    if not memory_key and chatwoot_contact_id:
+        memory_key = f"cw:{chatwoot_contact_id}"
+    if not memory_key:
+        log.warning("[MEMORY] Cannot upsert — no phone and no chatwoot_contact_id")
+        return
 
     sb = get_supabase()
     try:
         row = {
             "organization_id": org_id,
-            "contact_phone": phone_digits,
+            "contact_phone": memory_key,
         }
         for field in (
             "contact_name", "contact_company", "contact_email",
@@ -640,30 +678,37 @@ async def upsert_contact_memory(org_id: str, phone_digits: str, data: dict) -> N
             row,
             on_conflict="organization_id,contact_phone",
         ).execute()
-        log.info("[MEMORY] Upserted contact_memory for %s", phone_digits)
+        log.info("[MEMORY] Upserted contact_memory for %s", memory_key)
     except Exception as exc:
-        log.error("[MEMORY] FAILED to upsert contact_memory for %s: %s", phone_digits, exc)
+        log.error("[MEMORY] FAILED to upsert contact_memory for %s: %s", memory_key, exc)
 
 
-async def increment_contact_conversations(org_id: str, phone_digits: str) -> None:
+async def increment_contact_conversations(
+    org_id: str, phone_digits: str, chatwoot_contact_id: str = "",
+) -> None:
     """Increment total_conversations and update last_interaction_at."""
     from datetime import datetime, timedelta, timezone
     BRT = timezone(timedelta(hours=-3))
     now = datetime.now(BRT).isoformat()
 
+    # Resolve memory key
+    memory_key = phone_digits
+    if not memory_key and chatwoot_contact_id:
+        memory_key = f"cw:{chatwoot_contact_id}"
+    if not memory_key:
+        return
+
     sb = get_supabase()
     try:
-        # First check if exists
-        existing = await get_contact_memory(org_id, phone_digits)
+        existing = await get_contact_memory(org_id, phone_digits, chatwoot_contact_id)
         if existing:
             total = (existing.get("total_conversations") or 0) + 1
             sb.table("contact_memory").update({
                 "total_conversations": total,
                 "last_interaction_at": now,
-            }).eq("organization_id", org_id).eq("contact_phone", phone_digits).execute()
-        # If no existing row, memory will be created later by memory_manager
+            }).eq("organization_id", org_id).eq("contact_phone", memory_key).execute()
     except Exception as exc:
-        log.error("[MEMORY] FAILED to increment conversations for %s: %s", phone_digits, exc)
+        log.error("[MEMORY] FAILED to increment conversations for %s: %s", memory_key, exc)
 
 
 # ── Chatwoot connection (full) ─────────────────────────────────────
@@ -847,7 +892,7 @@ async def update_contact_fields(contact_id: str, fields: dict) -> bool:
 
 async def create_contact(
     org_id: str, name: str, phone: str, source: str = "whatsapp",
-    chatwoot_contact_id: str = "",
+    chatwoot_contact_id: str = "", channel: str = "WhatsApp",
 ) -> Optional[dict]:
     """Create a new contact in the CRM."""
     import re as _re
@@ -863,7 +908,7 @@ async def create_contact(
             "phone": digits,
             "status": "lead",
             "person_type": "PF",
-            "last_channel": "WhatsApp",
+            "last_channel": channel,
             "last_interaction_at": datetime.now(BRT).isoformat(),
         }
         if chatwoot_contact_id:

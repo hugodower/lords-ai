@@ -34,6 +34,7 @@ async def build_context(
     user_message: str,
     contact_memory: Optional[dict] = None,
     sentiment_data: Optional[dict] = None,
+    channel: str = "WhatsApp",
 ) -> str:
     """Build the full system prompt with verified data from Supabase."""
 
@@ -206,6 +207,43 @@ async def build_context(
         contact_phone=contact_phone,
         deal_stage="Não identificado",
     )
+
+    # Inject channel-specific instructions
+    if channel != "WhatsApp":
+        _channel_instructions = {
+            "Instagram": (
+                "Você está conversando pelo Instagram Direct. "
+                "Seja visual e dinâmica. Mensagens podem ser um pouco mais longas que no WhatsApp. "
+                "NÃO mencione WhatsApp na conversa."
+            ),
+            "Messenger": (
+                "Você está conversando pelo Facebook Messenger. "
+                "Tom amigável e acessível. "
+                "NÃO mencione WhatsApp na conversa."
+            ),
+            "Site": (
+                "Você está conversando pelo chat do site. "
+                "O visitante pode sair a qualquer momento. Seja objetiva e capture informações "
+                "de contato (email, WhatsApp) rapidamente para não perder o lead. "
+                "NÃO mencione WhatsApp como canal atual."
+            ),
+            "Email": (
+                "Você está conversando por email. "
+                "Pode usar textos mais longos e estruturados. "
+                "NÃO mencione WhatsApp na conversa."
+            ),
+            "Telegram": (
+                "Você está conversando pelo Telegram. "
+                "Mantenha as mensagens curtas e objetivas. "
+                "NÃO mencione WhatsApp na conversa."
+            ),
+        }
+        channel_text = _channel_instructions.get(channel, (
+            f"Você está conversando pelo canal {channel}. "
+            "Mantenha as mensagens profissionais e objetivas. "
+            "NÃO mencione WhatsApp na conversa."
+        ))
+        prompt += f"\n\n## CANAL DE COMUNICAÇÃO\n{channel_text}"
 
     # Inject long-term contact memory if available
     if contact_memory:

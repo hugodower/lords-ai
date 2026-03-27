@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import json as _json
 from datetime import datetime, timedelta, timezone
 
 from app.integrations import supabase_client as sb
+from app.integrations.chatwoot import chatwoot_client
 from app.services.whatsapp_sender import send_template
 from app.skills.business_hours import is_within_business_hours
 from app.utils.logger import get_logger
@@ -14,6 +16,13 @@ log = get_logger("followup:worker")
 BRT = timezone(timedelta(hours=-3))
 
 POLL_INTERVAL_SECONDS = 60
+
+# Follow-up messages for non-WhatsApp channels (sent via Chatwoot API)
+CHATWOOT_FOLLOWUP_MESSAGES = {
+    "24h": "Oi {name}! Estávamos conversando e acho que o dia ficou corrido, né? Estou por aqui quando puder continuar 😊",
+    "48h": "Oi {name}! Passando pra saber se ainda faz sentido aquela conversa sobre melhorar seu negócio 😊 Nosso time tem horários disponíveis essa semana pra uma reunião rápida!",
+    "7d": "Oi {name}! Aqui é a Aurora, da LORDS 😊 Faz alguns dias que conversamos e queria saber se posso te ajudar com alguma coisa!",
+}
 
 # Global flag for graceful shutdown
 _shutdown = False
@@ -101,14 +110,18 @@ async def _process_single(item: dict) -> None:
     # (for confirmacao and lembrete, skip this check — they're time-sensitive)
     if template_name not in ("confirmacao_agendamento", "lembrete_reuniao"):
         if not await is_within_business_hours(org_id):
-            # Reschedule to next business hours window (try again in 1h)
             log.info(
                 "[FOLLOWUP:SEND] Outside business hours for org %s — will retry next cycle",
                 org_id,
             )
             return  # Leave as pending, worker will retry next cycle
 
-    # Get WhatsApp credentials for this org
+    # ── Handle non-WhatsApp follow-ups via Chatwoot API ──────────────
+    if template_name.startswith("__chatwoot_direct"):
+        await _send_chatwoot_followup(item)
+        return
+
+    # ── WhatsApp follow-ups via Meta template API ────────────────────
     creds = await sb.get_whatsapp_credentials(org_id)
     if not creds:
         await sb.update_followup_status(fid, "failed", error="No WhatsApp credentials")
@@ -124,9 +137,8 @@ async def _process_single(item: dict) -> None:
     # Build variables from stored data
     variables = item.get("template_variables") or []
     if isinstance(variables, str):
-        import json
         try:
-            variables = json.loads(variables)
+            variables = _json.loads(variables)
         except Exception:
             variables = []
 
@@ -165,6 +177,60 @@ async def _process_single(item: dict) -> None:
         log.error(
             "[FOLLOWUP:FAIL] Erro ao enviar %s para conv %s: %s",
             template_name, conv_id, error,
+        )
+
+
+async def _send_chatwoot_followup(item: dict) -> None:
+    """Send a follow-up via Chatwoot API (for non-WhatsApp channels)."""
+    fid = item["id"]
+    org_id = item["organization_id"]
+    conv_id = item["conversation_id"]
+    contact_name = item.get("contact_name", "")
+    template_name = item["template_name"]
+
+    # Parse metadata to get followup_type
+    meta = item.get("metadata") or {}
+    if isinstance(meta, str):
+        try:
+            meta = _json.loads(meta)
+        except Exception:
+            meta = {}
+
+    followup_type = meta.get("followup_type", "24h")
+    channel = meta.get("channel", "unknown")
+
+    # Get the message text
+    msg_template = CHATWOOT_FOLLOWUP_MESSAGES.get(followup_type)
+    if not msg_template:
+        await sb.update_followup_status(fid, "failed", error=f"Unknown followup_type: {followup_type}")
+        return
+
+    message = msg_template.format(name=contact_name or "")
+
+    try:
+        result = await chatwoot_client.send_message(
+            conversation_id=str(conv_id),
+            text=message,
+            org_id=org_id,
+        )
+        if result.get("error"):
+            await sb.update_followup_status(fid, "failed", error=result["error"])
+            log.error(
+                "[FOLLOWUP:CHATWOOT:FAIL] %s for conv %s (%s): %s",
+                template_name, conv_id, channel, result["error"],
+            )
+        else:
+            now_str = datetime.now(BRT).isoformat()
+            await sb.update_followup_status(fid, "sent", sent_at=now_str)
+            log.info(
+                "[FOLLOWUP:CHATWOOT:SUCCESS] %s enviado para conv %s (%s)",
+                template_name, conv_id, channel,
+            )
+    except Exception as exc:
+        await sb.update_followup_status(fid, "failed", error=str(exc))
+        log.error(
+            "[FOLLOWUP:CHATWOOT:ERROR] %s for conv %s: %s",
+            template_name, conv_id, exc,
         )
 
 

@@ -54,6 +54,7 @@ async def ensure_contact_exists(
     phone: str,
     name: str = "",
     chatwoot_contact_id: str = "",
+    channel: str = "WhatsApp",
 ) -> Optional[dict]:
     """Find or create contact with deduplication.
 
@@ -97,13 +98,14 @@ async def ensure_contact_exists(
             return contact
 
     # 3) Not found — create
-    log.info("[PIPELINE:CONTACT:CREATE] Creating new contact: name='%s' phone='%s'", name, digits)
+    log.info("[PIPELINE:CONTACT:CREATE] Creating new contact: name='%s' phone='%s' channel='%s'", name, digits, channel)
     contact = await sb.create_contact(
         org_id=org_id,
         name=name or "Sem nome",
         phone=phone,
-        source="whatsapp",
+        source=channel.lower(),
         chatwoot_contact_id=chatwoot_contact_id,
+        channel=channel,
     )
     return contact
 
@@ -322,6 +324,7 @@ async def update_stage(
     stage_label: str,
     contact_name: str = "",
     chatwoot_contact_id: str = "",
+    channel: str = "WhatsApp",
 ) -> bool:
     """Ensure contact+deal exist, then swap the Chatwoot label.
 
@@ -337,7 +340,7 @@ async def update_stage(
     )
 
     # Ensure contact exists
-    contact = await ensure_contact_exists(org_id, contact_phone, contact_name, chatwoot_contact_id)
+    contact = await ensure_contact_exists(org_id, contact_phone, contact_name, chatwoot_contact_id, channel=channel)
     if not contact:
         log.error("[PIPELINE:UPDATE_STAGE] Could not find/create contact for phone='%s'", contact_phone)
         return False
@@ -360,13 +363,14 @@ async def ensure_contact_and_deal(
     contact_name: str = "",
     chatwoot_contact_id: str = "",
     conversation_id: str = "",
+    channel: str = "WhatsApp",
 ) -> None:
     """Ensure contact+deal exist. Adds novo_lead label only for new deals.
 
     Called on every message (the 'else' branch). Does NOT change labels on existing deals.
     """
     try:
-        contact = await ensure_contact_exists(org_id, contact_phone, contact_name, chatwoot_contact_id)
+        contact = await ensure_contact_exists(org_id, contact_phone, contact_name, chatwoot_contact_id, channel=channel)
         if not contact:
             return
 

@@ -34,11 +34,15 @@ async def schedule_followups_after_reply(
     action: str,
     lead_temperature: str = "cold",
     skill_used: str = "",
+    channel: str = "WhatsApp",
+    chatwoot_contact_id: str = "",
 ) -> None:
     """Schedule follow-up messages after Aurora replies and waits for lead response.
 
     Called AFTER Aurora sends a reply. If the lead doesn't respond,
     these follow-ups will fire at the scheduled times.
+
+    For non-WhatsApp channels, uses __chatwoot_direct templates (sent via Chatwoot API).
     """
     # Don't schedule if conversation ended
     if action in ("handoff", "blocked"):
@@ -56,40 +60,54 @@ async def schedule_followups_after_reply(
 
     now = datetime.now(BRT)
 
+    # Resolve contact_phone for DB storage (cw: prefix for non-WhatsApp)
+    phone_key = contact_phone
+    if not phone_key and chatwoot_contact_id:
+        phone_key = f"cw:{chatwoot_contact_id}"
+
+    # For non-WhatsApp channels, use __chatwoot_direct instead of WhatsApp templates
+    is_whatsapp = channel == "WhatsApp" and bool(contact_phone)
+
     # followup_24h → 24h from now
     if config.get("followup_24h_enabled", True):
+        template = "followup_24h" if is_whatsapp else "__chatwoot_direct_24h"
         await _schedule_if_not_exists(
             org_id=org_id,
             conversation_id=conversation_id,
-            contact_phone=contact_phone,
+            contact_phone=phone_key,
             contact_name=contact_name,
-            template_name="followup_24h",
+            template_name=template,
             variables=[contact_name or ""],
             scheduled_at=now + timedelta(hours=24),
+            metadata={"channel": channel, "followup_type": "24h"},
         )
 
     # followup_48h_agendar → 48h from now, ONLY if lead is qualified (warm/hot)
     if config.get("followup_48h_enabled", True) and lead_temperature in ("warm", "hot"):
+        template = "followup_48h_agendar" if is_whatsapp else "__chatwoot_direct_48h"
         await _schedule_if_not_exists(
             org_id=org_id,
             conversation_id=conversation_id,
-            contact_phone=contact_phone,
+            contact_phone=phone_key,
             contact_name=contact_name,
-            template_name="followup_48h_agendar",
+            template_name=template,
             variables=[contact_name or ""],
             scheduled_at=now + timedelta(hours=48),
+            metadata={"channel": channel, "followup_type": "48h"},
         )
 
     # reativacao_7d → 7 days from now
     if config.get("reativacao_7d_enabled", True):
+        template = "reativacao_7d" if is_whatsapp else "__chatwoot_direct_7d"
         await _schedule_if_not_exists(
             org_id=org_id,
             conversation_id=conversation_id,
-            contact_phone=contact_phone,
+            contact_phone=phone_key,
             contact_name=contact_name,
-            template_name="reativacao_7d",
+            template_name=template,
             variables=[contact_name or ""],
             scheduled_at=now + timedelta(days=7),
+            metadata={"channel": channel, "followup_type": "7d"},
         )
 
 

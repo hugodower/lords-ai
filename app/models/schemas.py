@@ -11,10 +11,11 @@ from pydantic import BaseModel, Field
 class ProcessMessageRequest(BaseModel):
     org_id: str
     conversation_id: str
-    contact_phone: str
+    contact_phone: str = ""  # Optional for non-WhatsApp channels
     contact_name: str = ""
     message: str
     inbox_source: str = "whatsapp"
+    channel: str = "WhatsApp"
 
 
 class ProcessMessageResponse(BaseModel):

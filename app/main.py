@@ -38,6 +38,19 @@ AGENTS = {
     "support": support_agent,
 }
 
+# Maps Chatwoot inbox channel_type to user-facing channel name
+CHANNEL_MAP = {
+    "Channel::Api": "WhatsApp",
+    "Channel::Whatsapp": "WhatsApp",
+    "Channel::WebWidget": "Site",
+    "Channel::FacebookPage": "Messenger",
+    "Channel::Instagram": "Instagram",
+    "Channel::Email": "Email",
+    "Channel::Telegram": "Telegram",
+    "Channel::Sms": "SMS",
+    "Channel::Line": "Line",
+}
+
 
 _followup_task: Optional[asyncio.Task] = None
 
@@ -126,6 +139,7 @@ async def process_message(req: ProcessMessageRequest):
         contact_phone=req.contact_phone,
         contact_name=req.contact_name,
         message=req.message,
+        channel=req.channel,
     )
 
 
@@ -189,6 +203,10 @@ async def chatwoot_webhook(request: Request):
         account_id = account.get("id") or payload.get("account_id")
         conversation_id = str(conversation.get("id", ""))
 
+        # Resolve channel from inbox type
+        channel_type = inbox.get("channel_type", "")
+        channel = CHANNEL_MAP.get(channel_type, "WhatsApp")
+
         contact_phone = (
             sender.get("phone_number")
             or (conversation.get("meta", {}).get("sender", {}).get("phone_number"))
@@ -202,8 +220,8 @@ async def chatwoot_webhook(request: Request):
         chatwoot_contact_id = str(sender.get("id", ""))
 
         log.info(
-            "[WEBHOOK] Dados extraídos: account_id=%s conv=%s phone=%s name=%s",
-            account_id, conversation_id, contact_phone, contact_name,
+            "[WEBHOOK] Dados extraídos: account_id=%s conv=%s phone=%s name=%s channel=%s (inbox_type=%s)",
+            account_id, conversation_id, contact_phone, contact_name, channel, channel_type,
         )
 
         # Resolve org_id from chatwoot_account_id
@@ -251,6 +269,7 @@ async def chatwoot_webhook(request: Request):
                 contact_name=contact_name,
                 message=combined_message,
                 chatwoot_contact_id=chatwoot_contact_id,
+                channel=channel,
             )
             log.info(
                 "[WEBHOOK] Debounced result: conv=%s action=%s agent=%s",
