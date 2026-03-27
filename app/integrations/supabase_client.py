@@ -927,6 +927,95 @@ async def create_contact(
         return None
 
 
+async def capture_contact_phone(
+    org_id: str, chatwoot_contact_id: str, phone: str,
+) -> bool:
+    """Update phone on a contact created without one (non-WhatsApp channel).
+
+    Also migrates the contact_memory key from cw:{id} to the real phone digits.
+    """
+    import re as _re
+    digits = _re.sub(r"\D", "", phone)
+    if not digits or not chatwoot_contact_id:
+        return False
+
+    sb = get_supabase()
+    try:
+        # 1) Find contact by chatwoot_contact_id
+        contact = await find_contact_by_chatwoot_id(org_id, chatwoot_contact_id)
+        if not contact:
+            log.warning("[CAPTURE] Contact not found for chatwoot_id=%s", chatwoot_contact_id)
+            return False
+
+        # Skip if contact already has a phone
+        if contact.get("phone"):
+            log.info("[CAPTURE] Contact %s already has phone=%s, skipping", contact["id"], contact["phone"])
+            return False
+
+        # 2) Update contact with captured phone
+        await update_contact_fields(contact["id"], {"phone": digits})
+        log.info(
+            "[CHANNEL:CAPTURE:UPDATE] Contact %s (cw:%s) updated with phone %s",
+            contact["id"], chatwoot_contact_id, digits,
+        )
+
+        # 3) Migrate contact_memory key from cw:{id} → real phone digits
+        cw_key = f"cw:{chatwoot_contact_id}"
+        try:
+            existing = (
+                sb.table("contact_memory")
+                .select("id")
+                .eq("organization_id", org_id)
+                .eq("contact_phone", cw_key)
+                .maybe_single()
+                .execute()
+            )
+            if existing and existing.data:
+                sb.table("contact_memory").update(
+                    {"contact_phone": digits}
+                ).eq("id", existing.data["id"]).execute()
+                log.info("[CHANNEL:CAPTURE:MEMORY] Memory key migrated: %s → %s", cw_key, digits)
+        except Exception as mem_exc:
+            log.warning("[CHANNEL:CAPTURE:MEMORY] Migration failed: %s", mem_exc)
+
+        # 4) Upgrade pending chatwoot_direct follow-ups to WhatsApp templates
+        try:
+            pending = (
+                sb.table("followup_queue")
+                .select("id, template_name")
+                .eq("organization_id", org_id)
+                .eq("contact_phone", cw_key)
+                .eq("status", "pending")
+                .execute()
+            )
+            upgraded = 0
+            template_map = {
+                "__chatwoot_direct_24h": "followup_24h",
+                "__chatwoot_direct_48h": "followup_48h_agendar",
+                "__chatwoot_direct_7d": "reativacao_7d",
+            }
+            for row in (pending.data or []):
+                wa_template = template_map.get(row["template_name"])
+                if wa_template:
+                    sb.table("followup_queue").update({
+                        "contact_phone": digits,
+                        "template_name": wa_template,
+                    }).eq("id", row["id"]).execute()
+                    upgraded += 1
+            if upgraded:
+                log.info(
+                    "[FOLLOWUP:UPGRADE] %d follow-ups converted from chatwoot_direct to WhatsApp for cw:%s → %s",
+                    upgraded, chatwoot_contact_id, digits,
+                )
+        except Exception as fu_exc:
+            log.warning("[FOLLOWUP:UPGRADE] Failed: %s", fu_exc)
+
+        return True
+    except Exception as exc:
+        log.error("[CHANNEL:CAPTURE] Failed for cw:%s phone=%s: %s", chatwoot_contact_id, phone, exc)
+        return False
+
+
 async def find_deal_for_contact(org_id: str, contact_id: str) -> Optional[dict]:
     """Find the most recent deal for a contact."""
     sb = get_supabase()

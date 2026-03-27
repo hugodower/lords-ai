@@ -21,6 +21,33 @@ def normalize_phone(raw: str) -> str:
     return f"+{digits}" if digits else raw
 
 
+def extract_phone_number(text: str) -> str | None:
+    """Extract a Brazilian phone number from free-form text.
+
+    Handles formats like:
+      (18) 99659-7391, 18996597391, +55 18 99659-7391,
+      18 99659-7391, 55 18 996597391, etc.
+
+    Returns digits in 55XXXXXXXXXXX format or None.
+    """
+    patterns = [
+        # +55 (18) 99659-7391  or  55 18 99659-7391
+        r"\+?55[\s.-]?\(?(\d{2})\)?[\s.-]?(\d{4,5})[\s.-]?(\d{4})",
+        # (18) 99659-7391  or  18 99659-7391
+        r"\(?(\d{2})\)?[\s.-]?(\d{4,5})[\s.-]?(\d{4})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            groups = match.groups()
+            digits = "".join(groups)
+            if len(digits) < 10 or len(digits) > 11:
+                continue
+            # Normalize to 55 + DDD + number
+            return f"55{digits}" if not digits.startswith("55") else digits
+    return None
+
+
 def format_phone_display(phone: str) -> str:
     """Format phone for display: +55 (18) 99638-6912."""
     digits = re.sub(r"\D", "", phone)

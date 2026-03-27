@@ -26,7 +26,7 @@ from app.services.pipeline_manager import update_stage, add_label_to_chatwoot, e
 from app.services.conversation_resolver import resolve_conversation, schedule_resolve
 from app.skills.handoff import perform_handoff
 from app.utils.logger import get_logger
-from app.utils.phone import normalize_phone
+from app.utils.phone import normalize_phone, extract_phone_number
 
 log = get_logger("agent:base")
 
@@ -180,6 +180,25 @@ class BaseAgent(ABC):
 
         # Save incoming message to Redis
         await add_message(conversation_id, "user", message)
+
+        # ── Phone capture for non-WhatsApp channels ──────────────
+        if channel != "WhatsApp" and not contact_phone and chatwoot_contact_id:
+            try:
+                captured = extract_phone_number(message)
+                if captured:
+                    log.info(
+                        "[CHANNEL:CAPTURE] Phone detected in message: '%s' → %s (conv=%s)",
+                        message[:80], captured, conversation_id,
+                    )
+                    success = await sb.capture_contact_phone(org_id, chatwoot_contact_id, captured)
+                    if success:
+                        contact_phone = captured
+                        log.info(
+                            "[CHANNEL:CAPTURE] Contact cw:%s updated with phone %s",
+                            chatwoot_contact_id, captured,
+                        )
+            except Exception as cap_err:
+                log.warning("[CHANNEL:CAPTURE] Error: %s", cap_err)
 
         # Log incoming message
         await log_interaction(

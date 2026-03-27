@@ -208,40 +208,50 @@ async def build_context(
         deal_stage="Não identificado",
     )
 
-    # Inject channel-specific instructions
+    # Inject channel-specific instructions (with WhatsApp capture for non-WA channels)
     if channel != "WhatsApp":
         _channel_instructions = {
             "Instagram": (
                 "Você está conversando pelo Instagram Direct. "
-                "Seja visual e dinâmica. Mensagens podem ser um pouco mais longas que no WhatsApp. "
-                "NÃO mencione WhatsApp na conversa."
+                "Seja visual e dinâmica. Mensagens podem ser um pouco mais longas que no WhatsApp.\n\n"
+                "CAPTURA DE WHATSAPP: Quando o lead demonstrar interesse (NÃO no primeiro contato, "
+                "espere ele engajar), peça o WhatsApp de forma natural. Exemplo: "
+                "'Que legal que se interessou! Pra eu te passar mais detalhes, qual seu WhatsApp? "
+                "Fica mais fácil a comunicação 😊'. NÃO peça logo na primeira mensagem, "
+                "espere o lead demonstrar interesse primeiro."
             ),
             "Messenger": (
                 "Você está conversando pelo Facebook Messenger. "
-                "Tom amigável e acessível. "
-                "NÃO mencione WhatsApp na conversa."
+                "Tom amigável e acessível.\n\n"
+                "CAPTURA DE WHATSAPP: Quando o lead demonstrar interesse, peça o WhatsApp "
+                "naturalmente. Exemplo: 'Pra gente continuar essa conversa de forma mais "
+                "prática, me passa seu WhatsApp? Nosso time vai te atender por lá 😊'. "
+                "NÃO peça logo na primeira mensagem."
             ),
             "Site": (
                 "Você está conversando pelo chat do site. "
-                "O visitante pode sair a qualquer momento. Seja objetiva e capture informações "
-                "de contato (email, WhatsApp) rapidamente para não perder o lead. "
-                "NÃO mencione WhatsApp como canal atual."
+                "O visitante pode sair a qualquer momento. Seja objetiva.\n\n"
+                "CAPTURA DE WHATSAPP/EMAIL: No chat do site o visitante pode fechar a janela "
+                "a qualquer momento. Tente capturar WhatsApp ou email cedo na conversa "
+                "(após a segunda mensagem). Exemplo: 'Pra não perder nosso contato quando "
+                "fechar essa janela, me passa seu WhatsApp ou email que continuo por lá! 😊'"
             ),
             "Email": (
                 "Você está conversando por email. "
-                "Pode usar textos mais longos e estruturados. "
-                "NÃO mencione WhatsApp na conversa."
+                "Pode usar textos mais longos e estruturados.\n\n"
+                "CAPTURA DE WHATSAPP: Se fizer sentido no fluxo da conversa, "
+                "ofereça continuar pelo WhatsApp para respostas mais rápidas."
             ),
             "Telegram": (
                 "Você está conversando pelo Telegram. "
-                "Mantenha as mensagens curtas e objetivas. "
-                "NÃO mencione WhatsApp na conversa."
+                "Mantenha as mensagens curtas e objetivas.\n\n"
+                "CAPTURA DE WHATSAPP: Se o lead demonstrar interesse, sugira "
+                "continuar pelo WhatsApp para facilitar o atendimento."
             ),
         }
         channel_text = _channel_instructions.get(channel, (
             f"Você está conversando pelo canal {channel}. "
-            "Mantenha as mensagens profissionais e objetivas. "
-            "NÃO mencione WhatsApp na conversa."
+            "Mantenha as mensagens profissionais e objetivas."
         ))
         prompt += f"\n\n## CANAL DE COMUNICAÇÃO\n{channel_text}"
 
