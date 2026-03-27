@@ -6,9 +6,9 @@ from app.guards.response_validator import validate_response
 
 
 PRODUCTS = [
-    {"name": "Fisioterapia", "price": 150.00},
-    {"name": "RPG", "price": 200.00},
-    {"name": "Pilates", "price": 120.00},
+    {"name": "Fisioterapia", "unit_price": 150.00},
+    {"name": "RPG", "unit_price": 200.00},
+    {"name": "Pilates", "unit_price": 120.00},
 ]
 
 FORBIDDEN = ["política", "religião", "concorrentes"]

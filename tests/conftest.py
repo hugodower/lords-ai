@@ -45,9 +45,9 @@ def sample_agent_config():
 @pytest.fixture
 def sample_products():
     return [
-        {"id": "prod-001", "name": "Fisioterapia", "description": "Sessão de fisioterapia", "price": 150.00, "category": "Saúde", "is_active": True},
-        {"id": "prod-002", "name": "RPG", "description": "Reeducação Postural Global", "price": 200.00, "category": "Saúde", "is_active": True},
-        {"id": "prod-003", "name": "Pilates", "description": "Aula de pilates", "price": 120.00, "category": "Saúde", "is_active": True},
+        {"id": "prod-001", "name": "Fisioterapia", "description": "Sessão de fisioterapia", "unit_price": 150.00, "category": "Saúde", "is_active": True},
+        {"id": "prod-002", "name": "RPG", "description": "Reeducação Postural Global", "unit_price": 200.00, "category": "Saúde", "is_active": True},
+        {"id": "prod-003", "name": "Pilates", "description": "Aula de pilates", "unit_price": 120.00, "category": "Saúde", "is_active": True},
     ]
 
 
