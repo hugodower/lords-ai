@@ -74,10 +74,13 @@ async def ensure_contact_exists(
             "[PIPELINE:CONTACT:FOUND] %s (id=%s, phone=%s)",
             contact.get("name"), contact["id"], contact.get("phone"),
         )
+        updates: dict = {}
         if chatwoot_contact_id and not contact.get("chatwoot_contact_id"):
-            await sb.update_contact_fields(contact["id"], {
-                "chatwoot_contact_id": str(chatwoot_contact_id),
-            })
+            updates["chatwoot_contact_id"] = str(chatwoot_contact_id)
+        if not contact.get("channel") and channel:
+            updates["channel"] = sb._channel_to_lowercase(channel)
+        if updates:
+            await sb.update_contact_fields(contact["id"], updates)
         return contact
 
     # 2) Search by chatwoot_contact_id
@@ -104,6 +107,8 @@ async def ensure_contact_exists(
                 updates["phone"] = digits
             if name and contact.get("name") in (None, "", "Sem nome"):
                 updates["name"] = name
+            if not contact.get("channel") and channel:
+                updates["channel"] = sb._channel_to_lowercase(channel)
             if updates:
                 await sb.update_contact_fields(contact["id"], updates)
             return contact
@@ -122,6 +127,8 @@ async def ensure_contact_exists(
                 updates["phone"] = digits
             if chatwoot_contact_id and not contact.get("chatwoot_contact_id"):
                 updates["chatwoot_contact_id"] = str(chatwoot_contact_id)
+            if not contact.get("channel") and channel:
+                updates["channel"] = sb._channel_to_lowercase(channel)
             if updates:
                 await sb.update_contact_fields(contact["id"], updates)
             return contact

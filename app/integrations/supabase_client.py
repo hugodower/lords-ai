@@ -900,6 +900,22 @@ async def update_contact_fields(contact_id: str, fields: dict) -> bool:
         return False
 
 
+_CHANNEL_LOWERCASE = {
+    "WhatsApp": "whatsapp",
+    "Instagram": "instagram",
+    "Messenger": "messenger",
+    "Site": "web",
+    "Email": "email",
+    "Telegram": "telegram",
+    "SMS": "sms",
+}
+
+
+def _channel_to_lowercase(channel: str) -> str:
+    """Map user-facing channel name to lowercase key for segmentation filters."""
+    return _CHANNEL_LOWERCASE.get(channel, channel.lower() if channel else "")
+
+
 async def create_contact(
     org_id: str, name: str, phone: str, source: str = "whatsapp",
     chatwoot_contact_id: str = "", channel: str = "WhatsApp",
@@ -919,6 +935,7 @@ async def create_contact(
             "status": "lead",
             "person_type": "PF",
             "last_channel": channel,
+            "channel": _channel_to_lowercase(channel),
             "last_interaction_at": datetime.now(BRT).isoformat(),
         }
         if chatwoot_contact_id:
