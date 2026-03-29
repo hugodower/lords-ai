@@ -751,7 +751,7 @@ _OWNER_CACHE_TTL = 300  # 5 minutes
 
 
 async def get_org_default_owner(org_id: str) -> Optional[str]:
-    """Return user_id of first org_admin/org_moderator for auto-assignment.
+    """Return user_id for auto-assignment: prefer ai_agent, fallback to org_admin.
 
     Cached for 5 minutes to avoid repeated queries.
     """
@@ -763,6 +763,22 @@ async def get_org_default_owner(org_id: str) -> Optional[str]:
 
     sb = get_supabase()
     try:
+        # 1) Prefer ai_agent (virtual AI user)
+        resp = (
+            sb.table("org_members")
+            .select("user_id")
+            .eq("organization_id", org_id)
+            .eq("role", "ai_agent")
+            .limit(1)
+            .execute()
+        )
+        if resp and resp.data:
+            uid = resp.data[0]["user_id"]
+            _owner_cache[org_id] = (uid, now)
+            log.info("[OWNER] AI agent owner for org=%s → %s", org_id, uid)
+            return uid
+
+        # 2) Fallback to org_admin/org_moderator
         resp = (
             sb.table("org_members")
             .select("user_id")
@@ -775,9 +791,9 @@ async def get_org_default_owner(org_id: str) -> Optional[str]:
         uid = resp.data[0]["user_id"] if resp and resp.data else None
         _owner_cache[org_id] = (uid, now)
         if uid:
-            log.info("[OWNER] Default owner for org=%s → %s", org_id, uid)
+            log.info("[OWNER] Admin owner for org=%s → %s", org_id, uid)
         else:
-            log.warning("[OWNER] No admin/moderator found for org=%s", org_id)
+            log.warning("[OWNER] No admin/ai_agent found for org=%s", org_id)
         return uid
     except Exception as exc:
         log.error("[OWNER] FAILED to get default owner for org=%s: %s", org_id, exc)
@@ -1180,3 +1196,46 @@ async def update_deal_lost(deal_id: str) -> bool:
     except Exception as exc:
         log.error("[PIPELINE] FAILED to mark deal %s as lost: %s", deal_id, exc)
         return False
+
+
+# ── Assignment: find CRM user by email ────────────────────────────
+
+
+async def find_user_id_by_email(email: str) -> Optional[str]:
+    """Find a CRM user_id by email (from auth.users via org_members join)."""
+    if not email:
+        return None
+    sb = get_supabase()
+    try:
+        # org_members doesn't have email, so query auth.users via Supabase Admin API
+        # Since we use service_role key, we can query auth.users
+        resp = sb.auth.admin.list_users()
+        for user in resp:
+            if getattr(user, "email", None) == email:
+                return str(user.id)
+        return None
+    except Exception as exc:
+        log.error("[ASSIGNMENT] FAILED to find user by email=%s: %s", email, exc)
+        return None
+
+
+async def find_contact_by_chatwoot_contact_id(
+    org_id: str, chatwoot_contact_id: str,
+) -> Optional[dict]:
+    """Find contact by chatwoot_contact_id, returning id + name + owner_user_id."""
+    if not chatwoot_contact_id:
+        return None
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("contacts")
+            .select("id, name, owner_user_id")
+            .eq("organization_id", org_id)
+            .eq("chatwoot_contact_id", str(chatwoot_contact_id))
+            .limit(1)
+            .execute()
+        )
+        return resp.data[0] if resp and resp.data else None
+    except Exception as exc:
+        log.error("[ASSIGNMENT] FAILED to find contact by cw_id=%s: %s", chatwoot_contact_id, exc)
+        return None

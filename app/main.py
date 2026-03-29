@@ -156,6 +156,18 @@ async def chatwoot_webhook(request: Request):
 
     # Filters
     event = payload.get("event")
+
+    # Handle assignment changes (conversation_updated with assignee change)
+    if event == "conversation_updated":
+        try:
+            changed = payload.get("changed_attributes") or {}
+            if "assignee_id" in changed:
+                await _handle_assignment_change(payload)
+                return JSONResponse({"status": "processed", "reason": "assignment_updated"})
+        except Exception as exc:
+            log.error("[ASSIGNMENT:ERROR] %s", exc)
+        return JSONResponse({"status": "ignored", "reason": "conversation_updated_no_assignee"})
+
     if event != "message_created":
         return JSONResponse({"status": "ignored", "reason": "event_not_message_created"})
 
@@ -313,6 +325,93 @@ async def chatwoot_webhook(request: Request):
             {"status": "error", "reason": str(exc), "traceback": tb},
             status_code=500,
         )
+
+
+# ── Assignment change handler ───────────────────────────────────────
+
+
+async def _handle_assignment_change(payload: dict) -> None:
+    """Handle Chatwoot conversation assignment change → update contact owner."""
+    import httpx
+    from app.services.pipeline_manager import _resolve_chatwoot_config
+
+    conversation = payload.get("conversation") or {}
+    changed = payload.get("changed_attributes") or {}
+    account = payload.get("account") or {}
+
+    conv_id = conversation.get("id", "?")
+    new_assignee_id = changed.get("assignee_id", [None, None])
+    # changed_attributes.assignee_id = [old_value, new_value]
+    assignee_id = new_assignee_id[1] if isinstance(new_assignee_id, list) else new_assignee_id
+
+    # Skip if unassigned (assignee removed)
+    if not assignee_id:
+        log.info("[ASSIGNMENT] Conv %s unassigned — keeping current owner", conv_id)
+        return
+
+    # Resolve org_id
+    account_id = account.get("id") or payload.get("account_id")
+    org_id = None
+    if account_id:
+        org_id = await sb.get_org_by_chatwoot_account(int(account_id))
+    if not org_id:
+        org_id = settings.org_id
+
+    # Get Chatwoot connection for API calls
+    conn = await sb.get_chatwoot_connection_cached(org_id)
+    base_url, cw_account_id, token = _resolve_chatwoot_config(conn)
+
+    # 1) Get assignee email from Chatwoot API
+    agent_email = None
+    agent_name = None
+    try:
+        headers = {"api_access_token": token}
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{base_url}/api/v1/accounts/{cw_account_id}/agents",
+                headers=headers,
+            )
+            if resp.status_code == 200:
+                for agent in resp.json():
+                    if agent.get("id") == assignee_id:
+                        agent_email = agent.get("email")
+                        agent_name = agent.get("name") or agent_email
+                        break
+    except Exception as exc:
+        log.warning("[ASSIGNMENT] Failed to fetch Chatwoot agent %s: %s", assignee_id, exc)
+        return
+
+    if not agent_email:
+        log.warning("[ASSIGNMENT] Conv %s — agent %s not found in Chatwoot", conv_id, assignee_id)
+        return
+
+    # 2) Find CRM user by email
+    crm_user_id = await sb.find_user_id_by_email(agent_email)
+    if not crm_user_id:
+        log.warning("[ASSIGNMENT] Conv %s — no CRM user for email %s", conv_id, agent_email)
+        return
+
+    # 3) Find contact linked to this conversation (via meta.sender)
+    meta = conversation.get("meta") or {}
+    sender = meta.get("sender") or {}
+    chatwoot_contact_id = str(sender.get("id", ""))
+
+    if not chatwoot_contact_id:
+        log.warning("[ASSIGNMENT] Conv %s — no sender.id in conversation meta", conv_id)
+        return
+
+    contact = await sb.find_contact_by_chatwoot_contact_id(org_id, chatwoot_contact_id)
+    if not contact:
+        log.warning("[ASSIGNMENT] Conv %s — contact cw:%s not found in CRM", conv_id, chatwoot_contact_id)
+        return
+
+    # 4) Update owner_user_id
+    old_owner = contact.get("owner_user_id") or "—"
+    await sb.update_contact_fields(contact["id"], {"owner_user_id": crm_user_id})
+    log.info(
+        "[ASSIGNMENT] Conv %s — responsável mudou: %s → %s (%s) para contato '%s'",
+        conv_id, old_owner[:8], crm_user_id[:8], agent_name, contact.get("name"),
+    )
 
 
 # ── Knowledge base ──────────────────────────────────────────────────
