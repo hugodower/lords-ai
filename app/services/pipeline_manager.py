@@ -12,6 +12,7 @@ import httpx
 
 from app.config import settings
 from app.integrations import supabase_client as sb
+from app.utils.ddd_mapper import get_location_from_phone
 from app.utils.logger import get_logger
 
 log = get_logger("pipeline")
@@ -83,6 +84,13 @@ async def ensure_contact_exists(
             owner = await sb.get_org_default_owner(org_id)
             if owner:
                 updates["owner_user_id"] = owner
+        if not contact.get("city"):
+            loc = get_location_from_phone(contact.get("phone") or phone)
+            if loc:
+                updates["city"] = loc["city"]
+                updates["state"] = loc["state"]
+                updates["country"] = loc["country"]
+                log.info("[PIPELINE:LOCATION:BACKFILL] %s — %s/%s", contact.get("name"), loc["city"], loc["state"])
         if updates:
             await sb.update_contact_fields(contact["id"], updates)
         return contact
@@ -117,6 +125,13 @@ async def ensure_contact_exists(
                 owner = await sb.get_org_default_owner(org_id)
                 if owner:
                     updates["owner_user_id"] = owner
+            if not contact.get("city"):
+                loc = get_location_from_phone(contact.get("phone") or phone)
+                if loc:
+                    updates["city"] = loc["city"]
+                    updates["state"] = loc["state"]
+                    updates["country"] = loc["country"]
+                    log.info("[PIPELINE:LOCATION:BACKFILL] %s — %s/%s", contact.get("name"), loc["city"], loc["state"])
             if updates:
                 await sb.update_contact_fields(contact["id"], updates)
             return contact
@@ -141,6 +156,13 @@ async def ensure_contact_exists(
                 owner = await sb.get_org_default_owner(org_id)
                 if owner:
                     updates["owner_user_id"] = owner
+            if not contact.get("city"):
+                loc = get_location_from_phone(contact.get("phone") or phone)
+                if loc:
+                    updates["city"] = loc["city"]
+                    updates["state"] = loc["state"]
+                    updates["country"] = loc["country"]
+                    log.info("[PIPELINE:LOCATION:BACKFILL] %s — %s/%s", contact.get("name"), loc["city"], loc["state"])
             if updates:
                 await sb.update_contact_fields(contact["id"], updates)
             return contact
@@ -160,7 +182,10 @@ async def ensure_contact_exists(
 
     # 4) Not found — create
     owner = await sb.get_org_default_owner(org_id)
+    loc = get_location_from_phone(phone)
     log.info("[PIPELINE:CONTACT:CREATE] Creating new contact: name='%s' phone='%s' channel='%s' owner='%s'", name, digits, channel, owner or "—")
+    if loc:
+        log.info("[PIPELINE:LOCATION] %s — %s/%s (DDD from phone)", name or "Sem nome", loc["city"], loc["state"])
     contact = await sb.create_contact(
         org_id=org_id,
         name=name or "Sem nome",
@@ -169,6 +194,9 @@ async def ensure_contact_exists(
         chatwoot_contact_id=chatwoot_contact_id,
         channel=channel,
         owner_user_id=owner or "",
+        city=loc["city"] if loc else "",
+        state=loc["state"] if loc else "",
+        country=loc["country"] if loc else "",
     )
     return contact
 
