@@ -79,6 +79,10 @@ async def ensure_contact_exists(
             updates["chatwoot_contact_id"] = str(chatwoot_contact_id)
         if not contact.get("channel") and channel:
             updates["channel"] = sb._channel_to_lowercase(channel)
+        if not contact.get("owner_user_id"):
+            owner = await sb.get_org_default_owner(org_id)
+            if owner:
+                updates["owner_user_id"] = owner
         if updates:
             await sb.update_contact_fields(contact["id"], updates)
         return contact
@@ -109,6 +113,10 @@ async def ensure_contact_exists(
                 updates["name"] = name
             if not contact.get("channel") and channel:
                 updates["channel"] = sb._channel_to_lowercase(channel)
+            if not contact.get("owner_user_id"):
+                owner = await sb.get_org_default_owner(org_id)
+                if owner:
+                    updates["owner_user_id"] = owner
             if updates:
                 await sb.update_contact_fields(contact["id"], updates)
             return contact
@@ -129,6 +137,10 @@ async def ensure_contact_exists(
                 updates["chatwoot_contact_id"] = str(chatwoot_contact_id)
             if not contact.get("channel") and channel:
                 updates["channel"] = sb._channel_to_lowercase(channel)
+            if not contact.get("owner_user_id"):
+                owner = await sb.get_org_default_owner(org_id)
+                if owner:
+                    updates["owner_user_id"] = owner
             if updates:
                 await sb.update_contact_fields(contact["id"], updates)
             return contact
@@ -147,7 +159,8 @@ async def ensure_contact_exists(
             )
 
     # 4) Not found — create
-    log.info("[PIPELINE:CONTACT:CREATE] Creating new contact: name='%s' phone='%s' channel='%s'", name, digits, channel)
+    owner = await sb.get_org_default_owner(org_id)
+    log.info("[PIPELINE:CONTACT:CREATE] Creating new contact: name='%s' phone='%s' channel='%s' owner='%s'", name, digits, channel, owner or "—")
     contact = await sb.create_contact(
         org_id=org_id,
         name=name or "Sem nome",
@@ -155,6 +168,7 @@ async def ensure_contact_exists(
         source=channel.lower(),
         chatwoot_contact_id=chatwoot_contact_id,
         channel=channel,
+        owner_user_id=owner or "",
     )
     return contact
 
