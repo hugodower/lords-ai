@@ -35,6 +35,7 @@ async def build_context(
     contact_memory: Optional[dict] = None,
     sentiment_data: Optional[dict] = None,
     channel: str = "WhatsApp",
+    campaign_context: Optional[dict] = None,
 ) -> str:
     """Build the full system prompt with verified data from Supabase."""
 
@@ -263,6 +264,56 @@ async def build_context(
         if memory_text:
             prompt += memory_text
 
+    # Inject campaign context if present and recent (< 72h)
+    if campaign_context:
+        try:
+            received_at = campaign_context.get("received_at", "")
+            is_recent = True
+            if received_at:
+                from datetime import datetime as _dt
+                try:
+                    ts = _dt.fromisoformat(received_at.replace("Z", "+00:00"))
+                    age_hours = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+                    is_recent = age_hours <= 72
+                except (ValueError, TypeError):
+                    pass
+
+            if is_recent:
+                ctype = campaign_context.get("type", "")
+                parts = [
+                    "\n\n## CONTEXTO DE CAMPANHA",
+                    "Este contato chegou através de uma campanha. Adapte sua abordagem:",
+                    "",
+                ]
+                if ctype == "ctwa_ad":
+                    parts.append(f"Tipo: Anúncio Click-to-WhatsApp")
+                    if campaign_context.get("headline"):
+                        parts.append(f"Título do anúncio: \"{campaign_context['headline']}\"")
+                    if campaign_context.get("body"):
+                        parts.append(f"Texto do anúncio: \"{campaign_context['body']}\"")
+                elif ctype == "template_response":
+                    parts.append(f"Tipo: Resposta a template de disparo em massa")
+                    if campaign_context.get("template_name"):
+                        parts.append(f"Template: \"{campaign_context['template_name']}\"")
+                    if campaign_context.get("template_body"):
+                        parts.append(f"Mensagem do template: \"{campaign_context['template_body']}\"")
+                elif ctype == "campaign_label":
+                    labels = campaign_context.get("labels", [])
+                    parts.append(f"Tipo: Campanha identificada por labels")
+                    parts.append(f"Labels: {', '.join(labels)}")
+
+                parts.extend([
+                    "",
+                    "IMPORTANTE:",
+                    "- NÃO use saudação genérica. Referencie diretamente o tema da campanha/anúncio.",
+                    "- Seja direta e conecte com o que a campanha prometeu.",
+                    "- NÃO repita o texto inteiro da campanha, apenas referencie o tema.",
+                ])
+                prompt += "\n".join(parts)
+                log.info("[CONTEXT] Campaign context injected: type=%s conv=%s", ctype, conversation_id)
+        except Exception as camp_err:
+            log.warning("[CONTEXT] Error injecting campaign context: %s", camp_err)
+
     # Inject sentiment-based tone adjustment
     sentiment_label = "neutral"
     if sentiment_data and sentiment_data.get("sentiment", "neutral") != "neutral":
@@ -275,7 +326,7 @@ async def build_context(
     log.info(
         "Context built for %s agent (org=%s, conv=%s) — %d chars | "
         "agent_name=%s | company=%s | products=%d | steps=%d | faq=%d | "
-        "forbidden=%d | history=%d msgs | rag=%d results | scheduling=%s | memory=%s | sentiment=%s",
+        "forbidden=%d | history=%d msgs | rag=%d results | scheduling=%s | memory=%s | sentiment=%s | campaign=%s",
         agent_type, org_id, conversation_id, len(prompt),
         agent_config.get("agent_name", "?"),
         (company.get("company_name") if company else "N/A"),
@@ -288,5 +339,6 @@ async def build_context(
         "yes" if "google_calendar" in sched_text.lower() else "basic",
         "yes" if contact_memory else "no",
         sentiment_label,
+        campaign_context.get("type") if campaign_context else "no",
     )
     return prompt

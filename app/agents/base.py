@@ -231,6 +231,23 @@ class BaseAgent(ABC):
         except Exception as mem_err:
             log.warning("[MEMORY] Error loading contact memory: %s", mem_err)
 
+        # ── Load campaign context from contact ─────────────────────
+        campaign_context = None
+        try:
+            _contact = None
+            if chatwoot_contact_id:
+                _contact = await sb.find_contact_by_chatwoot_id(org_id, chatwoot_contact_id)
+            if not _contact and contact_phone:
+                _contact = await sb.find_contact_by_phone(org_id, contact_phone)
+            if _contact and _contact.get("campaign_context"):
+                campaign_context = _contact["campaign_context"]
+                log.info(
+                    "[CAMPAIGN] Loaded campaign context for contact %s: type=%s",
+                    _contact["id"][:8], campaign_context.get("type", "?"),
+                )
+        except Exception as camp_err:
+            log.warning("[CAMPAIGN] Error loading campaign context: %s", camp_err)
+
         # ── Auto-handoff for persistent frustration ───────────────
         if sentiment_data["sentiment"] == "frustrated":
             history_check = await get_conversation_history(conversation_id)
@@ -291,6 +308,7 @@ class BaseAgent(ABC):
                 contact_memory=contact_memory,
                 sentiment_data=sentiment_data,
                 channel=channel,
+                campaign_context=campaign_context,
             )
         except Exception as ctx_err:
             log.error("build_context failed: %s", ctx_err)

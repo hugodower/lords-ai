@@ -863,7 +863,7 @@ async def find_contact_by_phone(org_id: str, phone: str) -> Optional[dict]:
     sb = get_supabase()
     clean = phone.strip().replace("-", "").replace(" ", "")
     digits = _re.sub(r"\D", "", clean)
-    cols = "id, name, phone, chatwoot_contact_id, owner_user_id, city"
+    cols = "id, name, phone, chatwoot_contact_id, owner_user_id, city, campaign_context"
 
     try:
         # 1) Exact match
@@ -910,7 +910,7 @@ async def find_contact_by_chatwoot_id(org_id: str, chatwoot_id: str) -> Optional
         return None
     sb = get_supabase()
     cid = str(chatwoot_id)
-    cols = "id, name, phone, chatwoot_contact_id, owner_user_id, city"
+    cols = "id, name, phone, chatwoot_contact_id, owner_user_id, city, campaign_context"
     try:
         resp = (
             sb.table("contacts").select(cols)
@@ -931,7 +931,7 @@ async def find_contacts_by_name(org_id: str, name: str) -> list[dict]:
     if not name or not name.strip():
         return []
     sb = get_supabase()
-    cols = "id, name, phone, email, chatwoot_contact_id, owner_user_id, city"
+    cols = "id, name, phone, email, chatwoot_contact_id, owner_user_id, city, campaign_context"
     try:
         resp = (
             sb.table("contacts").select(cols)

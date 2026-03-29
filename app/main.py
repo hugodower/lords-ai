@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.agents.sdr import sdr_agent
 from app.agents.support import support_agent
+from app.utils.campaign_extractor import extract_campaign_context
 from app.guards.debounce import debounce_message
 from app.integrations import supabase_client as sb
 from app.knowledge.rag import index_document, search_knowledge, ping_chroma
@@ -275,6 +276,37 @@ async def chatwoot_webhook(request: Request):
             "[WEBHOOK] org=%s conv=%s phone=%s name=%s msg=%s",
             org_id, conversation_id, contact_phone, contact_name, content[:50],
         )
+
+        # Extract and save campaign context (template response, CTWA ad, campaign labels)
+        try:
+            campaign_ctx = extract_campaign_context(payload)
+            if campaign_ctx and org_id:
+                # Find contact to save campaign context
+                contact_for_campaign = None
+                if chatwoot_contact_id:
+                    contact_for_campaign = await sb.find_contact_by_chatwoot_id(org_id, chatwoot_contact_id)
+                if not contact_for_campaign and contact_phone:
+                    contact_for_campaign = await sb.find_contact_by_phone(org_id, contact_phone)
+
+                if contact_for_campaign:
+                    await sb.update_contact_fields(
+                        contact_for_campaign["id"],
+                        {"campaign_context": campaign_ctx},
+                    )
+                    log.info(
+                        "[CAMPAIGN] Conv %s — detected %s: %s (contact=%s)",
+                        conversation_id,
+                        campaign_ctx.get("type", "?"),
+                        campaign_ctx.get("headline") or campaign_ctx.get("template_name") or campaign_ctx.get("labels", ""),
+                        contact_for_campaign["id"][:8],
+                    )
+                else:
+                    log.info(
+                        "[CAMPAIGN] Conv %s — detected %s but contact not found yet (will save on create)",
+                        conversation_id, campaign_ctx.get("type", "?"),
+                    )
+        except Exception as camp_err:
+            log.warning("[CAMPAIGN] Error extracting campaign context: %s", camp_err)
 
         # Determine agent and process
         log.info("[WEBHOOK] Buscando agentes ativos para org=%s...", org_id)
