@@ -21,7 +21,7 @@ log = get_logger("pipeline")
 # Mutually exclusive stage labels in Chatwoot (exact names)
 STAGE_LABELS = {
     "novo_lead", "qualificado", "reuniao_agendada",
-    "proposta_enviada", "em_negociacao", "fechou", "perdeu",
+    "enviar_proposta", "em_negociacao", "fechou", "perdeu",
 }
 
 

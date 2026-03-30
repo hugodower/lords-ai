@@ -450,10 +450,14 @@ async def _handle_assignment_change(payload: dict) -> None:
 
 
 @app.post("/api/v1/knowledge/upload", response_model=KnowledgeUploadResponse)
-async def upload_knowledge(file: UploadFile = File(...)):
+async def upload_knowledge(
+    file: UploadFile = File(...),
+    org_id: Optional[str] = Query(None),
+):
+    target_org = org_id or settings.org_id
     content = await file.read()
     text = content.decode("utf-8", errors="ignore")
-    chunks = await index_document(settings.org_id, file.filename or "upload", text)
+    chunks = await index_document(target_org, file.filename or "upload", text)
     return KnowledgeUploadResponse(
         status="indexed",
         chunks=chunks,
@@ -462,8 +466,13 @@ async def upload_knowledge(file: UploadFile = File(...)):
 
 
 @app.get("/api/v1/knowledge/search")
-async def search_kb(q: str = Query(...), limit: int = Query(5)):
-    results = await search_knowledge(settings.org_id, q, limit=limit)
+async def search_kb(
+    q: str = Query(...),
+    limit: int = Query(5),
+    org_id: Optional[str] = Query(None),
+):
+    target_org = org_id or settings.org_id
+    results = await search_knowledge(target_org, q, limit=limit)
     return {
         "results": [
             KnowledgeSearchResult(
@@ -527,9 +536,11 @@ async def get_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     date_from: Optional[str] = Query(None),
+    org_id: Optional[str] = Query(None),
 ):
+    target_org = org_id or settings.org_id
     logs, total = await sb.get_conversation_logs(
-        settings.org_id, page=page, limit=limit, date_from=date_from
+        target_org, page=page, limit=limit, date_from=date_from
     )
     return LogsResponse(
         logs=[LogEntry(**l) for l in logs],
@@ -542,7 +553,11 @@ async def get_logs(
 
 
 @app.get("/api/v1/metrics", response_model=MetricsResponse)
-async def get_metrics(period: str = Query("today")):
+async def get_metrics(
+    period: str = Query("today"),
+    org_id: Optional[str] = Query(None),
+):
+    target_org = org_id or settings.org_id
     now = datetime.utcnow()
     if period == "week":
         date_from = (now - timedelta(days=7)).isoformat()
@@ -551,7 +566,7 @@ async def get_metrics(period: str = Query("today")):
     else:  # today
         date_from = now.strftime("%Y-%m-%dT00:00:00")
 
-    m = await sb.get_metrics(settings.org_id, date_from)
+    m = await sb.get_metrics(target_org, date_from)
     return MetricsResponse(**m)
 
 
