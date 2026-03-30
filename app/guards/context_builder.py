@@ -135,6 +135,36 @@ async def build_context(
     else:
         company_text = "Dados da empresa não cadastrados."
 
+    # Format company description (for SDR template "Sobre a empresa" section)
+    if company:
+        company_name_val = company.get("company_name") or "a empresa"
+        segment_val = company.get("segment") or ""
+        description_val = company.get("description") or ""
+        differentials_val = company.get("differentials") or ""
+        company_desc_parts = []
+        if description_val:
+            company_desc_parts.append(description_val)
+        elif segment_val:
+            company_desc_parts.append(f"{company_name_val} é uma empresa especializada no segmento de {segment_val}.")
+        else:
+            company_desc_parts.append(f"{company_name_val}.")
+        if differentials_val:
+            company_desc_parts.append(f"\nDiferenciais: {differentials_val}")
+        company_description = "\n".join(company_desc_parts)
+    else:
+        company_description = "Dados da empresa não cadastrados. Consulte a seção 'Dados da empresa' abaixo."
+
+    # Format post-scheduling process
+    DEFAULT_POST_SCHEDULING = (
+        "1. Reunião de diagnóstico gratuita\n"
+        "2. Proposta personalizada\n"
+        "3. Implementação após aprovação\n"
+        "4. Suporte dedicado"
+    )
+    post_scheduling_process = DEFAULT_POST_SCHEDULING
+    if company and company.get("post_scheduling_process"):
+        post_scheduling_process = company["post_scheduling_process"]
+
     # Format history
     history_text = "\n".join(
         f"{'Lead' if h['role'] == 'user' else 'Você'}: {h['content']}"
@@ -196,6 +226,8 @@ async def build_context(
         role="assistente de vendas" if agent_type == "sdr" else "assistente de suporte",
         personality=agent_config.get("personality", "Profissional, simpática e objetiva."),
         company_name=company.get("company_name", "a empresa") if company else "a empresa",
+        company_description=company_description,
+        post_scheduling_process=post_scheduling_process,
         forbidden_topics=forbidden_text,
         qualification_steps=steps_text,
         hot_criteria=hot_criteria or "Quando demonstrar interesse claro em comprar/agendar.",

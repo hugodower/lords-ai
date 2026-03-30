@@ -17,12 +17,28 @@ BRT = timezone(timedelta(hours=-3))
 
 POLL_INTERVAL_SECONDS = 60
 
-# Follow-up messages for non-WhatsApp channels (sent via Chatwoot API)
-CHATWOOT_FOLLOWUP_MESSAGES = {
-    "24h": "Oi {name}! Estávamos conversando e acho que o dia ficou corrido, né? Estou por aqui quando puder continuar 😊",
-    "48h": "Oi {name}! Passando pra saber se ainda faz sentido aquela conversa sobre melhorar seu negócio 😊 Nosso time tem horários disponíveis essa semana pra uma reunião rápida!",
-    "7d": "Oi {name}! Aqui é a Aurora, da LORDS 😊 Faz alguns dias que conversamos e queria saber se posso te ajudar com alguma coisa!",
-}
+async def _get_chatwoot_followup_messages(org_id: str) -> dict[str, str]:
+    """Build follow-up messages with dynamic agent/company names."""
+    agent_name = "Ana"
+    company_name = "a empresa"
+    try:
+        active = await sb.get_active_agents(org_id)
+        if active:
+            agent_name = active[0].get("agent_name") or "Ana"
+    except Exception:
+        pass
+    try:
+        company_info = await sb.get_company_info(org_id)
+        if company_info:
+            company_name = company_info.get("company_name") or "a empresa"
+    except Exception:
+        pass
+
+    return {
+        "24h": "Oi {name}! Estávamos conversando e acho que o dia ficou corrido, né? Estou por aqui quando puder continuar 😊",
+        "48h": "Oi {name}! Passando pra saber se ainda faz sentido aquela conversa sobre melhorar seu negócio 😊 Nosso time tem horários disponíveis essa semana pra uma reunião rápida!",
+        "7d": f"Oi {{name}}! Aqui é a {agent_name}, da {company_name} 😊 Faz alguns dias que conversamos e queria saber se posso te ajudar com alguma coisa!",
+    }
 
 # Global flag for graceful shutdown
 _shutdown = False
@@ -199,8 +215,9 @@ async def _send_chatwoot_followup(item: dict) -> None:
     followup_type = meta.get("followup_type", "24h")
     channel = meta.get("channel", "unknown")
 
-    # Get the message text
-    msg_template = CHATWOOT_FOLLOWUP_MESSAGES.get(followup_type)
+    # Get the message text (dynamic per-org)
+    messages = await _get_chatwoot_followup_messages(org_id)
+    msg_template = messages.get(followup_type)
     if not msg_template:
         await sb.update_followup_status(fid, "failed", error=f"Unknown followup_type: {followup_type}")
         return

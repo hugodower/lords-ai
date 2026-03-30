@@ -19,7 +19,7 @@ REASONS = {
     "handoff_frustrado": "Lead demonstrou frustracao — handoff e resolucao para limpar fila.",
     "lead_desistiu": "Lead informou que nao tem interesse. Conversa encerrada.",
     "timeout_sem_resposta": "Lead nao respondeu apos reativacao (7d + 3 dias). Conversa arquivada.",
-    "finalizado": "Atendimento finalizado pela Aurora.",
+    "finalizado": "Atendimento finalizado pela {agent_name}.",
 }
 
 
@@ -64,10 +64,23 @@ async def resolve_conversation(
     """
     try:
         base_url, account_id, headers = await _get_chatwoot_config(org_id)
+
+        # Fetch dynamic agent name
+        agent_name = "Ana"
+        try:
+            active = await sb.get_active_agents(org_id)
+            if active:
+                agent_name = active[0].get("agent_name") or "Ana"
+        except Exception:
+            pass
+
         reason_text = REASONS.get(reason, reason)
+        # Apply agent_name placeholder if present
+        if "{agent_name}" in reason_text:
+            reason_text = reason_text.format(agent_name=agent_name)
 
         note = (
-            "Conversa resolvida automaticamente pela Aurora.\n"
+            f"Conversa resolvida automaticamente pela {agent_name}.\n"
             f"Motivo: {reason_text}"
         )
 

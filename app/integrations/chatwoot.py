@@ -9,7 +9,7 @@ from app.utils.logger import get_logger
 
 log = get_logger("chatwoot")
 
-AURORA_EMAIL = "aurora@ai.lordsads.uk"
+DEFAULT_AI_AGENT_EMAIL = "aurora@ai.lordsads.uk"
 
 
 class ChatwootClient:
@@ -20,8 +20,8 @@ class ChatwootClient:
             "api_access_token": settings.chatwoot_api_token,
             "Content-Type": "application/json",
         }
-        # Cache: {account_id: aurora_agent_id or None}
-        self._aurora_agent_cache: dict[str, int | None] = {}
+        # Cache: {account_id: ai_agent_id or None}
+        self._ai_agent_cache: dict[str, int | None] = {}
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}/api/v1/accounts/{self.account_id}{path}"
@@ -42,15 +42,33 @@ class ChatwootClient:
         headers = {"api_access_token": token, "Content-Type": "application/json"}
         return base_url, account_id, headers
 
-    # ── Aurora auto-assign ──────────────────────────────────────────────
+    # ── AI Agent auto-assign ─────────────────────────────────────────────
 
-    async def _get_aurora_agent_id(
-        self, base_url: str, account_id: int, headers: dict
+    async def _get_ai_agent_email(self, org_id: str = "") -> str:
+        """Get the AI agent email for an org, fallback to default."""
+        if not org_id:
+            return DEFAULT_AI_AGENT_EMAIL
+        try:
+            from app.integrations import supabase_client as sb
+            active = await sb.get_active_agents(org_id)
+            if active:
+                email = active[0].get("chatwoot_agent_email")
+                if email:
+                    return email
+        except Exception as exc:
+            log.warning("[AI_AGENT] Failed to get agent email for org %s: %s", org_id, exc)
+        return DEFAULT_AI_AGENT_EMAIL
+
+    async def _get_ai_agent_id(
+        self, base_url: str, account_id: int, headers: dict,
+        agent_email: str = "",
     ) -> int | None:
-        """Get Aurora's Chatwoot agent_id, cached per account."""
-        cache_key = str(account_id)
-        if cache_key in self._aurora_agent_cache:
-            return self._aurora_agent_cache[cache_key]
+        """Get AI agent's Chatwoot agent_id, cached per account."""
+        if not agent_email:
+            agent_email = DEFAULT_AI_AGENT_EMAIL
+        cache_key = f"{account_id}:{agent_email}"
+        if cache_key in self._ai_agent_cache:
+            return self._ai_agent_cache[cache_key]
 
         url = f"{base_url}/api/v1/accounts/{account_id}/agents"
         try:
@@ -58,30 +76,33 @@ class ChatwootClient:
                 resp = await client.get(url, headers=headers)
                 resp.raise_for_status()
                 for agent in resp.json():
-                    if agent.get("email") == AURORA_EMAIL:
+                    if agent.get("email") == agent_email:
                         aid = agent["id"]
-                        self._aurora_agent_cache[cache_key] = aid
+                        self._ai_agent_cache[cache_key] = aid
                         log.info(
-                            "[AURORA] Cached agent_id=%d for account %s", aid, account_id
+                            "[AI_AGENT] Cached agent_id=%d for account %s (email=%s)",
+                            aid, account_id, agent_email,
                         )
                         return aid
-            self._aurora_agent_cache[cache_key] = None
-            log.warning("[AURORA] Agent %s not found in account %s", AURORA_EMAIL, account_id)
+            self._ai_agent_cache[cache_key] = None
+            log.warning("[AI_AGENT] Agent %s not found in account %s", agent_email, account_id)
             return None
         except Exception as e:
-            log.warning("[AURORA] Failed to fetch agents for account %s: %s", account_id, e)
+            log.warning("[AI_AGENT] Failed to fetch agents for account %s: %s", account_id, e)
             return None
 
-    async def _auto_assign_aurora(
+    async def _auto_assign_ai_agent(
         self,
         conversation_id: str,
         base_url: str,
         account_id: int,
         headers: dict,
+        org_id: str = "",
     ) -> None:
-        """Assign Aurora to conversation if no agent is assigned yet."""
-        aurora_id = await self._get_aurora_agent_id(base_url, account_id, headers)
-        if not aurora_id:
+        """Assign AI agent to conversation if no agent is assigned yet."""
+        agent_email = await self._get_ai_agent_email(org_id)
+        ai_agent_id = await self._get_ai_agent_id(base_url, account_id, headers, agent_email=agent_email)
+        if not ai_agent_id:
             return
 
         conv_url = f"{base_url}/api/v1/accounts/{account_id}/conversations/{conversation_id}"
@@ -97,12 +118,12 @@ class ChatwootClient:
 
                 assign_url = f"{conv_url}/assignments"
                 resp = await client.post(
-                    assign_url, json={"assignee_id": aurora_id}, headers=headers
+                    assign_url, json={"assignee_id": ai_agent_id}, headers=headers
                 )
                 resp.raise_for_status()
-                log.info("[AURORA] Auto-assigned to conv %s", conversation_id)
+                log.info("[AI_AGENT] Auto-assigned to conv %s", conversation_id)
         except Exception as e:
-            log.warning("[AURORA] Auto-assign failed for conv %s: %s", conversation_id, e)
+            log.warning("[AI_AGENT] Auto-assign failed for conv %s: %s", conversation_id, e)
 
     # ── Message sending ─────────────────────────────────────────────────
 
@@ -145,14 +166,14 @@ class ChatwootClient:
             )
             return {"error": str(e)}
 
-        # Auto-assign Aurora for non-private outgoing messages
+        # Auto-assign AI agent for non-private outgoing messages
         if not private:
             try:
-                await self._auto_assign_aurora(
-                    conversation_id, base_url, account_id, headers
+                await self._auto_assign_ai_agent(
+                    conversation_id, base_url, account_id, headers, org_id=org_id
                 )
             except Exception as assign_err:
-                log.warning("[AURORA] Auto-assign error: %s", assign_err)
+                log.warning("[AI_AGENT] Auto-assign error: %s", assign_err)
 
         return result
 
