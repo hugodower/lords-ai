@@ -306,25 +306,32 @@ async def _extract_memory(history: list[dict]) -> Optional[dict]:
     """Use Claude Haiku to extract structured info from conversation history."""
     from app.integrations.claude_client import generate_extraction
 
-    # Build conversation text
+    # Build conversation text with clear role separation
     lines = []
     for msg in history[-30:]:  # Last 30 messages max
-        role = "Lead" if msg.get("role") == "user" else "Aurora"
-        lines.append(f"{role}: {msg.get('content', '')}")
+        role = "LEAD" if msg.get("role") == "user" else "AURORA (IA)"
+        lines.append(f"[{role}]: {msg.get('content', '')}")
     conversation_text = "\n".join(lines)
 
     prompt = (
-        "Analise esta conversa entre um lead e uma SDR e extraia informações. "
+        "Analise esta conversa entre um lead e a IA (Aurora). "
         "Responda APENAS em JSON válido, sem markdown:\n"
         "{\n"
-        '  "contact_name": "nome do contato ou null",\n'
-        '  "contact_company": "empresa do contato ou null",\n'
-        '  "contact_email": "email do contato ou null",\n'
+        '  "contact_name": "nome do lead ou null",\n'
+        '  "contact_company": "empresa/negócio do lead ou null",\n'
+        '  "contact_email": "email do lead ou null",\n'
         '  "summary": "Resumo em 2-3 frases do que foi discutido",\n'
-        '  "interests": ["lista", "de", "interesses/servicos"],\n'
+        '  "interests": ["max 5 interesses REAIS do lead"],\n'
         '  "qualification_status": "cold|warm|hot",\n'
         '  "key_info": {}\n'
         "}\n\n"
+        "REGRAS CRÍTICAS PARA O CAMPO interests:\n"
+        "- Extraia interesses SOMENTE do que o LEAD disse (linhas [LEAD]).\n"
+        "- NUNCA inclua produtos/serviços que a AURORA (IA) mencionou ou ofereceu.\n"
+        "- Interesses são: o negócio do lead, o que ele busca, a necessidade/dor dele.\n"
+        "- Máximo 5 interesses, apenas os mais relevantes.\n"
+        "- Se o lead disse 'tenho uma padaria e quero vender mais' → interests: ['padaria', 'aumento de vendas']\n"
+        "- Se a IA disse 'temos CRM, landing pages, disparos' → NÃO incluir esses termos.\n\n"
         "Conversa:\n"
         f"{conversation_text}"
     )
@@ -375,10 +382,18 @@ def _merge_memory(existing: Optional[dict], new_data: dict) -> dict:
     if new_summary:
         merged["summary"] = new_summary
 
-    # Interests: merge without duplicates
-    old_interests = set(merged.get("interests") or [])
-    new_interests = set(new_data.get("interests") or [])
-    merged["interests"] = sorted(old_interests | new_interests)
+    # Interests: merge without duplicates, cap at 5 (newest first)
+    old_interests = list(merged.get("interests") or [])
+    new_interests = list(new_data.get("interests") or [])
+    # New interests take priority, then old, deduplicated
+    seen = set()
+    combined = []
+    for i in new_interests + old_interests:
+        low = i.lower().strip()
+        if low and low not in seen:
+            seen.add(low)
+            combined.append(i.strip())
+    merged["interests"] = combined[:5]
 
     # Qualification: take new if it's "higher"
     status_rank = {"cold": 0, "warm": 1, "hot": 2, "converted": 3, "lost": -1}
