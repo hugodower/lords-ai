@@ -1179,22 +1179,57 @@ async def update_deal_stage(deal_id: str, stage_id: str) -> bool:
         return False
 
 
-async def update_deal_lost(deal_id: str) -> bool:
-    """Mark a deal as lost."""
+async def update_deal_lost(deal_id: str, reason: str = "unknown") -> bool:
+    """Mark a deal as lost.
+
+    Atualiza status='lost', loss_reason e closed_at.
+    """
+    from datetime import datetime  # padrão do arquivo: import local
     sb = get_supabase()
     try:
         resp = (
             sb.table("deals")
-            .update({"status": "lost"})
+            .update({
+                "status": "lost",
+                "loss_reason": reason,
+                "closed_at": datetime.utcnow().isoformat(),
+            })
             .eq("id", deal_id)
             .execute()
         )
         success = bool(resp and resp.data)
         if success:
-            log.info("[PIPELINE] Deal %s marked as lost", deal_id)
+            log.info("[PIPELINE] Deal %s marked as LOST (reason=%s)", deal_id, reason)
         return success
     except Exception as exc:
         log.error("[PIPELINE] FAILED to mark deal %s as lost: %s", deal_id, exc)
+        return False
+
+
+async def update_deal_won(deal_id: str, reason: str = "closed") -> bool:
+    """Mark a deal as won.
+
+    Atualiza status='won', won_reason e closed_at.
+    """
+    from datetime import datetime  # padrão do arquivo: import local
+    sb = get_supabase()
+    try:
+        resp = (
+            sb.table("deals")
+            .update({
+                "status": "won",
+                "won_reason": reason,
+                "closed_at": datetime.utcnow().isoformat(),
+            })
+            .eq("id", deal_id)
+            .execute()
+        )
+        success = bool(resp and resp.data)
+        if success:
+            log.info("[PIPELINE] Deal %s marked as WON (reason=%s)", deal_id, reason)
+        return success
+    except Exception as exc:
+        log.error("[PIPELINE] FAILED to mark deal %s as won: %s", deal_id, exc)
         return False
 
 
