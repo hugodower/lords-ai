@@ -15,7 +15,7 @@ log = get_logger("resolve")
 BRT = timezone(timedelta(hours=-3))
 
 REASONS = {
-    "reuniao_agendada": "Reuniao agendada com sucesso. Lead pode enviar nova mensagem a qualquer momento.",
+    "03-reuniao-agendada": "Reuniao agendada com sucesso. Lead pode enviar nova mensagem a qualquer momento.",
     "handoff_frustrado": "Lead demonstrou frustracao — handoff e resolucao para limpar fila.",
     "lead_desistiu": "Lead informou que nao tem interesse. Conversa encerrada.",
     "timeout_sem_resposta": "Lead nao respondeu apos reativacao (7d + 3 dias). Conversa arquivada.",
