@@ -589,6 +589,32 @@ async def get_whatsapp_credentials(org_id: str) -> Optional[dict]:
         return None
 
 
+async def get_label_mappings(org_id: str) -> list[dict]:
+    """Retorna as label_mappings da org.
+
+    Cada linha representa uma etiqueta do Chatwoot mapeada pra uma label do CRM.
+    Usada tanto pelo context_builder (popular {valid_labels} no prompt) quanto
+    pelo pipeline_manager (validar stage_label antes de aplicar no Chatwoot).
+
+    Returns:
+        Lista de dicts no formato:
+        [{"chatwoot_label": "01-novo-contato", "crm_label_id": "...", "auto_sync": True}, ...]
+        Vazio se a org não tem mappings cadastrados.
+    """
+    sb_client = get_supabase()
+    try:
+        resp = (
+            sb_client.table("label_mappings")
+            .select("chatwoot_label, crm_label_id, auto_sync")
+            .eq("organization_id", org_id)
+            .execute()
+        )
+        return resp.data or []
+    except Exception as exc:
+        log.warning("Failed to load label_mappings for org=%s: %s", org_id, exc)
+        return []
+
+
 # ── Contact memory ──────────────────────────────────────────────────
 
 

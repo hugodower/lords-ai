@@ -18,16 +18,43 @@ from app.utils.logger import get_logger
 log = get_logger("pipeline")
 
 
-# Labels de stage usadas no Chatwoot da LORDS (padrão numérico).
-# Importante: 'fechou' e 'perdeu' foram removidos — agora são representados
-# via deals.status ('won' / 'lost'), não via label.
-STAGE_LABELS = {
+# Fallback labels — usadas apenas se label_mappings estiver vazio ou o Supabase
+# falhar. Em produção, cada org define suas próprias labels via tabela
+# label_mappings. Esse fallback preserva o comportamento da LORDS em caso
+# de indisponibilidade do banco (safety net, não fonte de verdade).
+# 'fechou' e 'perdeu' foram removidos — agora são representados via
+# deals.status ('won' / 'lost'), não via label.
+STAGE_LABELS_FALLBACK = {
     "01-novo-contato",
     "02-qualificacao",
     "03-reuniao-agendada",
     "04-proposta-enviada",
     "05-em-negociacao",
 }
+
+
+async def get_stage_labels(org_id: str) -> set[str]:
+    """Retorna as stage labels válidas da org (lidas de label_mappings).
+
+    Se a tabela estiver vazia ou o Supabase falhar, usa STAGE_LABELS_FALLBACK
+    pra não quebrar organizações ativas. Log de warning pra rastreabilidade.
+    """
+    try:
+        mappings = await sb.get_label_mappings(org_id)
+        labels = {m["chatwoot_label"] for m in mappings if m.get("chatwoot_label")}
+        if not labels:
+            log.warning(
+                "[PIPELINE:LABELS] Empty label_mappings for org=%s — using fallback",
+                org_id,
+            )
+            return STAGE_LABELS_FALLBACK
+        return labels
+    except Exception as exc:
+        log.warning(
+            "[PIPELINE:LABELS] Failed to load label_mappings for org=%s (%s) — using fallback",
+            org_id, exc,
+        )
+        return STAGE_LABELS_FALLBACK
 
 
 def _normalize_phone(phone: str) -> str:
@@ -285,9 +312,10 @@ async def swap_chatwoot_label(
             current_labels = resp.json().get("labels", [])
             log.info("[PIPELINE:SWAP:CURRENT] conv=%s labels=%s", conversation_id, current_labels)
 
-            # Build new labels list
-            removed = [l for l in current_labels if l in STAGE_LABELS]
-            new_labels = [l for l in current_labels if l not in STAGE_LABELS]
+            # Build new labels list (stage labels são mutuamente exclusivas)
+            stage_labels = await get_stage_labels(org_id)
+            removed = [l for l in current_labels if l in stage_labels]
+            new_labels = [l for l in current_labels if l not in stage_labels]
             if new_label not in new_labels:
                 new_labels.append(new_label)
 
@@ -443,8 +471,12 @@ async def update_stage(
 
     The CRM automation rules handle moving deals based on labels.
     """
-    if stage_label not in STAGE_LABELS:
-        log.warning("[PIPELINE] Unknown stage_label='%s' — skipping (valid: %s)", stage_label, STAGE_LABELS)
+    stage_labels = await get_stage_labels(org_id)
+    if stage_label not in stage_labels:
+        log.warning(
+            "[PIPELINE] Unknown stage_label='%s' for org=%s — skipping (valid: %s)",
+            stage_label, org_id, sorted(stage_labels),
+        )
         return False
 
     log.info(

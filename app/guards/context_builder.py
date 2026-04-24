@@ -72,6 +72,11 @@ async def build_context(
     except Exception as exc:
         log.warning("Failed to load hot_criteria: %s", exc)
         hot_criteria = None
+    try:
+        label_mappings = await sb.get_label_mappings(org_id)
+    except Exception as exc:
+        log.warning("Failed to load label_mappings: %s", exc)
+        label_mappings = []
     # Conversation history from Redis
     try:
         history = await get_conversation_history(conversation_id)
@@ -100,9 +105,10 @@ async def build_context(
             "responda com transparência. Nunca mencione Claude, Anthropic ou OpenAI."
         )
 
-    # Format products list (DB column is 'unit_price')
+    # Format products list — WITHOUT price (Aurora nunca menciona valores;
+    # preço é decidido pós-agendamento de reunião)
     products_text = "\n".join(
-        f"- {p['name']}: R$ {p.get('unit_price', 'sob consulta')} — {p.get('description', '')}"
+        f"- {p['name']}: {p.get('description', '')}"
         for p in products
     ) or "Nenhum produto cadastrado."
 
@@ -120,6 +126,21 @@ async def build_context(
 
     # Format forbidden topics
     forbidden_text = ", ".join(forbidden) if forbidden else "Nenhum tópico proibido."
+
+    # Format valid labels (stage labels da org — Aurora NUNCA deve inventar
+    # label fora dessa lista)
+    if label_mappings:
+        valid_labels_text = "\n".join(
+            f"- {m['chatwoot_label']}" for m in label_mappings if m.get("chatwoot_label")
+        )
+    else:
+        valid_labels_text = (
+            "- 01-novo-contato\n"
+            "- 02-qualificacao\n"
+            "- 03-reuniao-agendada\n"
+            "- 04-proposta-enviada\n"
+            "- 05-em-negociacao"
+        )
 
     # Format company info
     if company:
@@ -229,6 +250,7 @@ async def build_context(
         company_description=company_description,
         post_scheduling_process=post_scheduling_process,
         forbidden_topics=forbidden_text,
+        valid_labels=valid_labels_text,
         qualification_steps=steps_text,
         hot_criteria=hot_criteria or "Quando demonstrar interesse claro em comprar/agendar.",
         products_list=products_text,
@@ -358,7 +380,7 @@ async def build_context(
     log.info(
         "Context built for %s agent (org=%s, conv=%s) — %d chars | "
         "agent_name=%s | company=%s | products=%d | steps=%d | faq=%d | "
-        "forbidden=%d | history=%d msgs | rag=%d results | scheduling=%s | memory=%s | sentiment=%s | campaign=%s",
+        "forbidden=%d | labels=%d | history=%d msgs | rag=%d results | scheduling=%s | memory=%s | sentiment=%s | campaign=%s",
         agent_type, org_id, conversation_id, len(prompt),
         agent_config.get("agent_name", "?"),
         (company.get("company_name") if company else "N/A"),
@@ -366,6 +388,7 @@ async def build_context(
         len(steps),
         len(faq),
         len(forbidden),
+        len(label_mappings),
         len(history),
         len(rag_results),
         "yes" if "google_calendar" in sched_text.lower() else "basic",
