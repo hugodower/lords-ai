@@ -122,3 +122,26 @@
 ### Fase 3 — Testes
 7. Criar casos de teste para novos labels
 8. Smoke test do pipeline end-to-end
+
+---
+
+## ✅ FASE 2 — Correções aplicadas
+
+**Branch**: `fix/labels-migration-lords`
+**Data**: 2026-04-24
+
+### Alterações
+- `pipeline_manager.py`: STAGE_LABELS atualizado, swap_chatwoot_label corrigido, +2 funções (mark_deal_as_lost, mark_deal_as_won)
+- `agents/base.py`: 5 strings de stage atualizadas
+- `followup_worker.py`: substituído update_stage("perdeu") por mark_deal_as_lost()
+- `conversation_resolver.py`: key REASONS atualizada
+- `scripts/`: removidos backfill_chatwoot_novo_lead.py e fix_chatwoot_novo_lead.py
+
+### Sanity check
+- ✅ Grep exaustivo retornou 0 ocorrências de labels antigos em app/
+
+### Pendente
+- [ ] PR review
+- [ ] Smoke test em staging
+- [ ] Merge + deploy
+- [ ] Validação end-to-end (criar conversa nova, ver card no estágio correto)

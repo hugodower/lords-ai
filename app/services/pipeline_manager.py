@@ -18,10 +18,15 @@ from app.utils.logger import get_logger
 log = get_logger("pipeline")
 
 
-# Mutually exclusive stage labels in Chatwoot (exact names)
+# Labels de stage usadas no Chatwoot da LORDS (padrão numérico).
+# Importante: 'fechou' e 'perdeu' foram removidos — agora são representados
+# via deals.status ('won' / 'lost'), não via label.
 STAGE_LABELS = {
-    "novo_lead", "qualificado", "reuniao_agendada",
-    "enviar_proposta", "em_negociacao", "fechou", "perdeu",
+    "01-novo-contato",
+    "02-qualificacao",
+    "03-reuniao-agendada",
+    "04-proposta-enviada",
+    "05-em-negociacao",
 }
 
 
@@ -473,7 +478,7 @@ async def ensure_contact_and_deal(
     conversation_id: str = "",
     channel: str = "WhatsApp",
 ) -> None:
-    """Ensure contact+deal exist. Adds novo_lead label only for new deals.
+    """Ensure contact+deal exist. Adds 01-novo-contato label only for new deals.
 
     Called on every message (the 'else' branch). Does NOT change labels on existing deals.
     """
@@ -485,8 +490,8 @@ async def ensure_contact_and_deal(
         deal, is_new = await ensure_deal_exists(org_id, contact["id"], contact_name=contact_name)
 
         if is_new and conversation_id:
-            await swap_chatwoot_label(org_id, conversation_id, "novo_lead")
-            log.info("[PIPELINE] First contact — novo_lead label set for conv %s", conversation_id)
+            await swap_chatwoot_label(org_id, conversation_id, "01-novo-contato")
+            log.info("[PIPELINE] First contact — 01-novo-contato label set for conv %s", conversation_id)
             # Assign team on first contact
             try:
                 await assign_team(org_id, conversation_id)
@@ -494,3 +499,76 @@ async def ensure_contact_and_deal(
                 log.warning("[PIPELINE:TEAM] Failed to assign team on new deal: %s", team_err)
     except Exception as exc:
         log.error("[PIPELINE] ensure_contact_and_deal error: %s", exc)
+
+
+async def mark_deal_as_lost(
+    org_id: str,
+    contact_phone: str,
+    reason: str = "unknown",
+) -> bool:
+    """Marca o deal ativo de um contato como perdido (status='lost').
+
+    Substitui update_stage(..., "perdeu", ...) que dependia da label 'perdeu'
+    (removida do banco da LORDS).
+
+    Protege contra sobrescrever deals já fechados: se o deal mais recente
+    do contato já estiver com status 'won' ou 'lost', loga warning e retorna False.
+
+    Args:
+        org_id: UUID da organização
+        contact_phone: telefone normalizado do contato
+        reason: motivo do lost (vai pra coluna loss_reason)
+
+    Returns:
+        True se atualizou, False se contato/deal não encontrado ou deal já fechado.
+    """
+    contact = await sb.find_contact_by_phone(org_id, contact_phone)
+    if not contact:
+        log.warning("[PIPELINE] mark_deal_as_lost: contato não encontrado phone=%s", contact_phone)
+        return False
+
+    deal = await sb.find_deal_for_contact(org_id, contact["id"])
+    if not deal:
+        log.warning("[PIPELINE] mark_deal_as_lost: nenhum deal para contact=%s", contact["id"])
+        return False
+
+    if deal.get("status") in ("won", "lost"):
+        log.warning(
+            "[PIPELINE] mark_deal_as_lost: deal %s já fechado (status=%s), ignorando",
+            deal["id"], deal.get("status")
+        )
+        return False
+
+    return await sb.update_deal_lost(deal["id"], reason=reason)
+
+
+async def mark_deal_as_won(
+    org_id: str,
+    contact_phone: str,
+    reason: str = "closed",
+) -> bool:
+    """Marca o deal ativo de um contato como ganho (status='won').
+
+    Substitui update_stage(..., "fechou", ...) que dependia da label 'fechou'
+    (removida do banco da LORDS).
+
+    Protege contra sobrescrever deals já fechados.
+    """
+    contact = await sb.find_contact_by_phone(org_id, contact_phone)
+    if not contact:
+        log.warning("[PIPELINE] mark_deal_as_won: contato não encontrado phone=%s", contact_phone)
+        return False
+
+    deal = await sb.find_deal_for_contact(org_id, contact["id"])
+    if not deal:
+        log.warning("[PIPELINE] mark_deal_as_won: nenhum deal para contact=%s", contact["id"])
+        return False
+
+    if deal.get("status") in ("won", "lost"):
+        log.warning(
+            "[PIPELINE] mark_deal_as_won: deal %s já fechado (status=%s), ignorando",
+            deal["id"], deal.get("status")
+        )
+        return False
+
+    return await sb.update_deal_won(deal["id"], reason=reason)
