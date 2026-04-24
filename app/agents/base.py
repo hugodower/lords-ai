@@ -284,7 +284,7 @@ class BaseAgent(ABC):
                 )
                 # Pipeline: move to negociacao + resolve (frustrated handoff)
                 try:
-                    await update_stage(org_id, contact_phone, conversation_id, "em_negociacao", contact_name, chatwoot_contact_id, channel=channel)
+                    await update_stage(org_id, contact_phone, conversation_id, "05-em-negociacao", contact_name, chatwoot_contact_id, channel=channel)
                     await resolve_conversation(org_id, conversation_id, "handoff_frustrado")
                 except Exception as _pe:
                     log.warning("[PIPELINE] Error on frustrated handoff: %s", _pe)
@@ -611,15 +611,15 @@ class BaseAgent(ABC):
                 output.crm_updates.tags if output.crm_updates else [],
             )
             if action == "schedule":
-                log.info("[PIPELINE:TRIGGER] → calling update_stage('reuniao_agendada') for conv %s", conversation_id)
-                await update_stage(org_id, contact_phone, conversation_id, "reuniao_agendada", contact_name, chatwoot_contact_id, channel=channel)
-                schedule_resolve(org_id, conversation_id, 30, "reuniao_agendada")
+                log.info("[PIPELINE:TRIGGER] → calling update_stage('03-reuniao-agendada') for conv %s", conversation_id)
+                await update_stage(org_id, contact_phone, conversation_id, "03-reuniao-agendada", contact_name, chatwoot_contact_id, channel=channel)
+                schedule_resolve(org_id, conversation_id, 30, "03-reuniao-agendada")
             elif action == "handoff":
-                log.info("[PIPELINE:TRIGGER] → calling update_stage('em_negociacao') for conv %s", conversation_id)
-                await update_stage(org_id, contact_phone, conversation_id, "em_negociacao", contact_name, chatwoot_contact_id, channel=channel)
+                log.info("[PIPELINE:TRIGGER] → calling update_stage('05-em-negociacao') for conv %s", conversation_id)
+                await update_stage(org_id, contact_phone, conversation_id, "05-em-negociacao", contact_name, chatwoot_contact_id, channel=channel)
             elif output.lead_temperature in ("hot", "warm"):
-                log.info("[PIPELINE:TRIGGER] → calling update_stage('qualificado') for conv %s (temp=%s)", conversation_id, output.lead_temperature)
-                await update_stage(org_id, contact_phone, conversation_id, "qualificado", contact_name, chatwoot_contact_id, channel=channel)
+                log.info("[PIPELINE:TRIGGER] → calling update_stage('02-qualificacao') for conv %s (temp=%s)", conversation_id, output.lead_temperature)
+                await update_stage(org_id, contact_phone, conversation_id, "02-qualificacao", contact_name, chatwoot_contact_id, channel=channel)
             else:
                 log.info("[PIPELINE:TRIGGER] → calling ensure_contact_and_deal() for conv %s (temp=%s)", conversation_id, output.lead_temperature)
                 await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id, channel=channel)
