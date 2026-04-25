@@ -62,6 +62,15 @@ def _normalize_phone(phone: str) -> str:
     return re.sub(r"\D", "", phone.strip()) if phone else ""
 
 
+def _label_to_position(stage_label: str) -> Optional[int]:
+    """Extract numeric position from stage label like '03-reuniao-agendada' → 3.
+
+    Returns None if label doesn't follow the 'NN-name' convention.
+    """
+    match = re.match(r'^(\d+)-', stage_label)
+    return int(match.group(1)) if match else None
+
+
 # ── Chatwoot config helper ───────────────────────────────────────────────
 
 def _resolve_chatwoot_config(conn: dict | None) -> tuple[str, int, str]:
@@ -496,9 +505,40 @@ async def update_stage(
         log.error("[PIPELINE:UPDATE_STAGE] Could not find/create deal for contact=%s", contact["id"])
         return False
 
-    # Swap label — CRM automation handles the rest
+    # Swap label in Chatwoot
     result = await swap_chatwoot_label(org_id, conversation_id, stage_label)
     log.info("[PIPELINE:UPDATE_STAGE] Result: label='%s' conv=%s success=%s", stage_label, conversation_id, result)
+
+    # If Chatwoot swap succeeded, also update deals.stage_id in Supabase
+    if result:
+        position = _label_to_position(stage_label)
+        if position is not None:
+            try:
+                stages = await sb.get_pipeline_stages(org_id)
+                target_stage = next((s for s in stages if s.get("position") == position), None)
+                if target_stage:
+                    stage_id = target_stage["id"]
+                    await sb.update_deal_stage(deal["id"], stage_id)
+                    log.info(
+                        "[PIPELINE:UPDATE_STAGE:CRM] Deal %s moved to stage_id=%s (position=%d, label='%s')",
+                        deal["id"], stage_id, position, stage_label,
+                    )
+                else:
+                    log.warning(
+                        "[PIPELINE:UPDATE_STAGE:CRM] No stage found for position=%d in org=%s",
+                        position, org_id,
+                    )
+            except Exception as exc:
+                log.error(
+                    "[PIPELINE:UPDATE_STAGE:CRM] Failed to update deal=%s for org=%s: %s",
+                    deal["id"], org_id, exc,
+                )
+        else:
+            log.debug(
+                "[PIPELINE:UPDATE_STAGE:CRM] Label '%s' has no numeric prefix — skipping CRM stage update",
+                stage_label,
+            )
+
     return result
 
 
