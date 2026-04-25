@@ -493,6 +493,22 @@ async def update_stage(
         org_id, contact_phone, conversation_id, stage_label, contact_name, chatwoot_contact_id,
     )
 
+    # Guard contra retrocesso automático (Risco 1 / Bloco 3)
+    # Comparação SOMENTE por position — ignora nome/label.
+    current = await get_current_stage(org_id, contact_phone)
+    if current and current.get("position") is not None:
+        target_position = _get_stage_position_by_chatwoot_label(org_id, stage_label)
+        if target_position is not None and target_position < current["position"]:
+            log.warning(
+                "[STAGE:REGRESSION_BLOCKED] %s | atual=%s(pos=%d) tentou=%s(pos=%d) — recusado",
+                contact_phone,
+                current["name"],
+                current["position"],
+                stage_label,
+                target_position,
+            )
+            return False  # recusa silenciosamente, segue o fluxo
+
     # Ensure contact exists
     contact = await ensure_contact_exists(org_id, contact_phone, contact_name, chatwoot_contact_id, channel=channel)
     if not contact:
@@ -540,6 +556,90 @@ async def update_stage(
             )
 
     return result
+
+
+async def get_current_stage(org_id: str, phone: str) -> dict | None:
+    """
+    Busca o stage atual do deal ativo de um contato.
+
+    Reaproveita find_contact_by_phone e find_deal_for_contact (já existentes no supabase_client).
+    Faz a query de pipeline_stages inline (mesmo padrão da query existente neste módulo).
+
+    Retorna:
+        {"name": "02. Qualificação", "position": 2} se encontrar deal ativo
+        None se não houver contato/deal/stage, ou se houver erro
+
+    NÃO levanta exceção — em caso de erro, loga e retorna None.
+    """
+    try:
+        # 1. Buscar contato pelo phone (função já existente no supabase_client)
+        contact = await sb.find_contact_by_phone(org_id, phone)
+        if not contact:
+            log.info("[STAGE:GET] Sem contato para %s na org %s", phone, org_id)
+            return None
+
+        # 2. Buscar deal ativo do contato (função já existente no supabase_client)
+        deal = await sb.find_deal_for_contact(org_id, contact["id"])
+        if not deal or not deal.get("stage_id"):
+            log.info("[STAGE:GET] Sem deal ativo para contact %s", contact["id"])
+            return None
+
+        # 3. Buscar stage no pipeline_stages (mesma query que já existe na linha ~869)
+        # Usa o helper privado _get_stage_by_id (a ser criado na Mudança 2)
+        stage = await _get_stage_by_id(org_id, deal["stage_id"])
+        if not stage:
+            log.warning("[STAGE:GET] Stage %s não encontrado", deal["stage_id"])
+            return None
+
+        result = {
+            "name": stage.get("name"),
+            "position": stage.get("position"),
+        }
+        log.info("[STAGE:GET] %s está em %s (position %s)", phone, result["name"], result["position"])
+        return result
+
+    except Exception as e:
+        log.error("[STAGE:GET:ERROR] Falha ao buscar stage de %s: %s", phone, str(e))
+        return None
+
+
+async def _get_stage_by_id(org_id: str, stage_id: str) -> dict | None:
+    """
+    Helper privado — busca um pipeline_stage pelo ID.
+
+    Retorna dict com {id, name, position, pipeline_id} ou None.
+    Reaproveita o padrão de query já existente neste módulo (sb.get_pipeline_stages).
+    """
+    try:
+        # Pega todos os stages da org e filtra pelo ID
+        # (aproveita o cache/otimização já existente em get_pipeline_stages)
+        stages = await sb.get_pipeline_stages(org_id)
+        for stage in stages:
+            if stage.get("id") == stage_id:
+                return stage
+
+        log.warning("[STAGE:_get_by_id] Stage %s não encontrado para org %s", stage_id, org_id)
+        return None
+    except Exception as e:
+        log.error("[STAGE:_get_by_id:ERROR] %s — stage_id=%s: %s", org_id, stage_id, str(e))
+        return None
+
+
+def _get_stage_position_by_chatwoot_label(org_id: str, chatwoot_label: str) -> int | None:
+    """
+    Helper privado — converte um chatwoot_label em position numérica.
+
+    Usado pelo guard de retrocesso. Comparação é feita SOMENTE por position.
+
+    O chatwoot_label vem no formato "02-qualificacao" (etiqueta do Chatwoot).
+    Aproveita a função _label_to_position já existente que extrai o número do prefixo.
+
+    Retorna a position (int) ou None se não seguir o formato 'NN-nome'.
+
+    Nota: esta versão é síncrona e não precisa acessar o banco - aproveita
+    a convenção de numeração já estabelecida no projeto.
+    """
+    return _label_to_position(chatwoot_label)
 
 
 async def ensure_contact_and_deal(
