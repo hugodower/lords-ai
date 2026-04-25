@@ -7,6 +7,7 @@ from typing import Optional
 from app.integrations import supabase_client as sb
 from app.memory.redis_store import get_conversation_history, get_agreed_schedule
 from app.knowledge.rag import search_knowledge
+from app.services.pipeline_manager import get_current_stage
 from app.utils.logger import get_logger
 
 BRT = timezone(timedelta(hours=-3))
@@ -14,6 +15,20 @@ BRT = timezone(timedelta(hours=-3))
 log = get_logger("context_builder")
 
 TEMPLATES_DIR = Path(__file__).parent.parent.parent / "templates"
+
+
+async def _get_deal_stage_for_context(org_id: str, contact_phone: str) -> str:
+    """
+    Helper para buscar o stage atual do deal para injetar no contexto da Aurora.
+
+    Retorna o nome do stage (ex: "02. Qualificação") ou default para novos contatos.
+    """
+    try:
+        current_stage = await get_current_stage(org_id, contact_phone)
+        return current_stage["name"] if current_stage else "01. Novo Contato"
+    except Exception as e:
+        log.warning("[CONTEXT:STAGE] Erro ao buscar stage para %s: %s", contact_phone, str(e))
+        return "01. Novo Contato"
 
 
 def _load_template(agent_type: str) -> str:
@@ -261,7 +276,7 @@ async def build_context(
         conversation_history=history_text,
         contact_name=contact_name or "Não informado",
         contact_phone=contact_phone,
-        deal_stage="Não identificado",
+        deal_stage=await _get_deal_stage_for_context(org_id, contact_phone),
     )
 
     # Inject channel-specific instructions (with WhatsApp capture for non-WA channels)
