@@ -8,6 +8,7 @@ from typing import Optional
 from app.config import settings
 from app.guards.rate_limiter import check_rate_limit
 from app.guards.intent_classifier import classify_message_intent
+from app.guards.qualification_guard import is_generic_greeting
 from app.guards.context_builder import build_context
 from app.guards.response_validator import validate_response
 from app.guards.autonomy_limit import check_autonomy_limit
@@ -618,16 +619,29 @@ class BaseAgent(ABC):
                 log.info("[PIPELINE:TRIGGER] → calling update_stage('05-em-negociacao') for conv %s", conversation_id)
                 await update_stage(org_id, contact_phone, conversation_id, "05-em-negociacao", contact_name, chatwoot_contact_id, channel=channel)
             elif output.lead_temperature in ("hot", "warm"):
-                log.info("[PIPELINE:TRIGGER] → calling update_stage('02-qualificacao') for conv %s (temp=%s)", conversation_id, output.lead_temperature)
-                await update_stage(org_id, contact_phone, conversation_id, "02-qualificacao", contact_name, chatwoot_contact_id, channel=channel)
+                if is_generic_greeting(message):
+                    log.warning(
+                        "[QUALIFICATION:GUARD_BLOCKED] conv=%s temp=%s blocked: generic greeting only (message=%r). Treating as cold + 01-novo-contato.",
+                        conversation_id, output.lead_temperature, message[:50]
+                    )
+                    await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id, channel=channel)
+                else:
+                    log.info("[PIPELINE:TRIGGER] → calling update_stage('02-qualificacao') for conv %s (temp=%s)", conversation_id, output.lead_temperature)
+                    await update_stage(org_id, contact_phone, conversation_id, "02-qualificacao", contact_name, chatwoot_contact_id, channel=channel)
             else:
                 log.info("[PIPELINE:TRIGGER] → calling ensure_contact_and_deal() for conv %s (temp=%s)", conversation_id, output.lead_temperature)
                 await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id, channel=channel)
 
             # CRM-driven stage move (if Claude specified a stage explicitly)
             if output.crm_updates and output.crm_updates.stage:
-                log.info("[PIPELINE:TRIGGER] → CRM override: update_stage('%s') for conv %s", output.crm_updates.stage, conversation_id)
-                await update_stage(org_id, contact_phone, conversation_id, output.crm_updates.stage, contact_name, chatwoot_contact_id, channel=channel)
+                if output.crm_updates.stage == "02-qualificacao" and is_generic_greeting(message):
+                    log.warning(
+                        "[QUALIFICATION:GUARD_BLOCKED] conv=%s crm_updates.stage='02-qualificacao' blocked: generic greeting only (message=%r). Stage override ignored.",
+                        conversation_id, message[:50]
+                    )
+                else:
+                    log.info("[PIPELINE:TRIGGER] → CRM override: update_stage('%s') for conv %s", output.crm_updates.stage, conversation_id)
+                    await update_stage(org_id, contact_phone, conversation_id, output.crm_updates.stage, contact_name, chatwoot_contact_id, channel=channel)
             if output.crm_updates and output.crm_updates.tags:
                 for tag in output.crm_updates.tags:
                     await add_label_to_chatwoot(org_id, conversation_id, tag)
