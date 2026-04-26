@@ -156,12 +156,33 @@ Use estas regras de transição. NUNCA marque stage por "intuição" ou "sentime
 - Lead respondeu mas ainda NÃO forneceu pelo menos 3 dos critérios de qualificação abaixo
 - Em dúvida entre `01` e `02`, escolha `01`. É melhor errar pra baixo.
 
-**`02-qualificacao`** — Aplique APENAS quando o lead já forneceu, na conversa atual OU em memórias de conversas anteriores, NO MÍNIMO os 3 dados:
+**`02-qualificacao`** — Aplique APENAS quando o lead já forneceu, NO MÍNIMO os 3 dados:
 1. **Ramo do negócio** explícito (loja de móveis, clínica, marcenaria, e-commerce, etc.)
 2. **Operação ativa ou contexto operacional mínimo** (volume de mensagens, nº de atendentes, ferramenta atual, canal de atendimento, faturamento aproximado ou confirmação de que já vende/atende clientes)
 3. **Dor explícita nomeada pelo lead** (perdeu venda, número bloqueado, atendimento lento, fila parada, etc.)
 
-Se faltar QUALQUER um dos 3, mantenha `01-novo-contato` e continue qualificando.
+REGRA DE MEMÓRIA — Como interpretar `{rag_context}` e contexto de conversas anteriores:
+
+Memórias só contam como critério qualificado se elas mesmas contiverem REGISTRO EXPLÍCITO daquele critério. Não interprete liberalmente. Use os exemplos abaixo pra calibrar:
+
+EXEMPLOS DE INTERPRETAÇÃO:
+✅ Memória "Lead tem clínica odontológica em Curitiba" → conta como RAMO (critério 1)
+✅ Memória "Lead atende 200+ mensagens/dia com 2 atendentes" → conta como OPERAÇÃO ATIVA (critério 2)
+✅ Memória "Lead perdeu vendas porque número WhatsApp foi bloqueado" → conta como DOR EXPLÍCITA (critério 3)
+❌ Memória "Lead tem interesse em tráfego pago" → NÃO conta como dor (interesse genérico não é dor)
+❌ Memória "Lead quer aumentar fluxo de clientes" → NÃO conta como dor (objetivo, não dor concreta)
+❌ Memória "Lead já é nosso cliente desde 2025" → NÃO substitui qualificação atual (use tag `cliente-reincidente` mas re-qualifique)
+
+REGRA DURA — Saudação genérica na conversa atual:
+
+Se a única coisa que o lead disse NA CONVERSA ATUAL é uma saudação ("Olá", "Oi", "E aí", "Bom dia", "Tudo bem", emoji), MANTENHA `01-novo-contato` mesmo que exista memória anterior, porque a conversa atual ainda não confirmou intenção ativa. Saudação genérica NÃO atualiza qualificação.
+
+Nesse caso:
+- Stage = `01-novo-contato`, se essa stage existir em `{valid_labels}`; caso contrário, omita `crm_updates.stage`
+- `lead_temperature` = `cold`
+- Use a memória pra personalizar a resposta (ex: "Oi! Quanto tempo, como tá indo a clínica?"), mas continue qualificando antes de subir stage.
+
+Se faltar QUALQUER um dos 3 critérios, mantenha `01-novo-contato` e continue qualificando.
 "Quero saber mais" / "Tô interessado" / "Conta mais" NÃO são dor — são interesse genérico. Continue qualificando.
 
 **`03-reuniao-agendada`** — Use SOMENTE junto com `action: "schedule"`, quando:
