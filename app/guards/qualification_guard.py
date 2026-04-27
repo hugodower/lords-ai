@@ -13,7 +13,7 @@ from typing import Final
 # Saudações genéricas que NÃO sinalizam intenção qualificada.
 # Cada padrão tenta cobrir variações comuns em PT-BR.
 _GREETING_PATTERNS: Final[list[str]] = [
-    r"^\s*(ol[áa]|oi+|opa|e\s+a[íi]|hey|hi|hello)\s*[!?.\s]*$",
+    r"^\s*(ol[áa]+|oi+|opa+|e\s+a[íi]+|hey+|hi+|hello+)\s*[!?.\s]*$",
     r"^\s*(bom\s+dia|boa\s+tarde|boa\s+noite|bom\s+dia[!.\s]*)\s*[!?.\s]*$",
     r"^\s*(tudo\s+(bem|bom|certo|tranquilo|tranquilo[?]))\s*[!?.\s]*$",
     r"^\s*(td\s+bem|tb|blz|beleza)\s*[!?.\s]*$",

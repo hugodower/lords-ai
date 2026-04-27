@@ -33,6 +33,18 @@ class TestGenericGreetingPositive:
         assert is_generic_greeting(message) is True, f"Expected True for {message!r}"
 
     @pytest.mark.parametrize("message", [
+        "Opaa", "Opaaa", "Opaaaaaa",
+        "Oiii", "Oiiii",
+        "Oláa", "Oláaa", "Oláaaa",
+        "Heyy", "Heyyy",
+        "Hii", "Hiii",
+        "Helloo", "Hellooo",
+        "E aíí",
+    ])
+    def test_repeated_vowel_variants(self, message):
+        assert is_generic_greeting(message) is True, f"Expected True for {message!r}"
+
+    @pytest.mark.parametrize("message", [
         "olá",
         "OLÁ",
         "Olá!",
