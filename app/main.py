@@ -13,8 +13,10 @@ from app.config import settings
 from app.agents.sdr import sdr_agent
 from app.agents.support import support_agent
 from app.utils.campaign_extractor import extract_campaign_context
+from app.utils.meta_lead_parser import parse_meta_lead_ad, is_likely_meta_lead_ad
 from app.guards.debounce import debounce_message
 from app.integrations import supabase_client as sb
+from app.integrations.chatwoot import chatwoot_client
 from app.knowledge.rag import index_document, search_knowledge, ping_chroma
 from app.memory.redis_store import is_paused, ping_redis, set_paused
 from app.services.followup_worker import start_worker as start_followup_worker, stop_worker as stop_followup_worker
@@ -258,6 +260,47 @@ async def chatwoot_webhook(request: Request):
             "[WEBHOOK] Dados extraídos: account_id=%s conv=%s phone=%s name=%s channel=%s (inbox_type=%s)",
             account_id, conversation_id, contact_phone, contact_name, channel, channel_type,
         )
+
+        # === NOVO: Detecção de Meta Lead Ad ===
+        is_facebook = channel_type == "Channel::FacebookPage"
+        sender_is_generic = is_likely_meta_lead_ad(content, contact_name)
+
+        if is_facebook and sender_is_generic:
+            log.info("[META_LEAD_AD] Conv %s — sender genérico detectado, tentando parse", conversation_id)
+
+            try:
+                lead_data = parse_meta_lead_ad(content)
+
+                if lead_data:
+                    log.info(
+                        "[META_LEAD_AD] Conv %s — parseado: name='%s' phone='%s'",
+                        conversation_id, lead_data["name"], lead_data["phone"]
+                    )
+
+                    # Sobrescrever vars com dados REAIS pra rest do pipeline
+                    contact_name = lead_data["name"]
+                    if lead_data["phone"]:
+                        contact_phone = lead_data["phone"]
+
+                    # Atualizar contato no Chatwoot (best-effort)
+                    if chatwoot_contact_id:
+                        await chatwoot_client.update_contact(
+                            contact_id=int(chatwoot_contact_id),
+                            name=lead_data["name"],
+                            phone_number=lead_data["phone"],
+                            email=lead_data["email"],
+                            custom_attributes={
+                                "city": lead_data["city"],
+                                "lead_source": "meta_lead_ad",
+                                **lead_data["custom_attributes"]
+                            }
+                        )
+                else:
+                    log.info("[META_LEAD_AD] Conv %s — content NÃO bateu padrão Lead Ad, segue fluxo normal", conversation_id)
+            except Exception as exc:
+                log.error("[META_LEAD_AD:ERROR] Conv %s — %s, segue fluxo normal", conversation_id, exc)
+
+        # === FIM bloco novo — pipeline continua normal abaixo ===
 
         # Resolve org_id from chatwoot_account_id
         log.info("[WEBHOOK] Buscando org para account_id=%s...", account_id)
