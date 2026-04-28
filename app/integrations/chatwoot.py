@@ -202,5 +202,74 @@ class ChatwootClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def update_contact(
+        self,
+        contact_id: int,
+        name: str = "",
+        phone_number: str = "",
+        email: str = "",
+        custom_attributes: Optional[dict] = None,
+    ) -> Optional[dict]:
+        """Update an existing Chatwoot contact with real data.
+
+        Used to fix contacts that came as 'John Doe' from Meta Lead Ads,
+        replacing placeholder data with the real lead information parsed
+        from message content.
+
+        Args:
+            contact_id: Chatwoot contact ID to update
+            name: Real full name (skips if empty)
+            phone_number: Phone number with country code (skips if empty)
+            email: Email address (skips if empty)
+            custom_attributes: Dict of custom attributes to merge
+
+        Returns:
+            Updated contact dict on success, None on 404 or empty payload
+        """
+        url = self._url(f"/contacts/{contact_id}")
+
+        payload: dict = {}
+        if name:
+            payload["name"] = name
+        if phone_number:
+            payload["phone_number"] = phone_number
+        if email:
+            payload["email"] = email
+        if custom_attributes:
+            payload["custom_attributes"] = custom_attributes
+
+        if not payload:
+            log.info(
+                "[CHATWOOT:UPDATE_CONTACT] No data to update for contact %s",
+                contact_id,
+            )
+            return None
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.patch(
+                    url,
+                    headers=self.headers,
+                    json=payload,
+                )
+                if resp.status_code == 404:
+                    log.warning(
+                        "[CHATWOOT:UPDATE_CONTACT] Contact %s not found (404)",
+                        contact_id,
+                    )
+                    return None
+                resp.raise_for_status()
+                log.info(
+                    "[CHATWOOT:UPDATE_CONTACT] Contact %s updated: name='%s' phone='%s'",
+                    contact_id, name, phone_number,
+                )
+                return resp.json()
+        except Exception as exc:
+            log.error(
+                "[CHATWOOT:UPDATE_CONTACT:ERROR] Contact %s — %s",
+                contact_id, exc,
+            )
+            return None
+
 
 chatwoot_client = ChatwootClient()
