@@ -372,13 +372,22 @@ async def update_deal_ai_fields(
 
 
 async def get_org_by_chatwoot_account(account_id: int) -> Optional[str]:
-    """Return organization_id for a given Chatwoot account_id."""
+    """
+    Return organization_id for a given Chatwoot account_id, scoped to the
+    current VPS context.
+
+    Each org runs in its own dedicated VPS but shares a central Supabase.
+    The lookup is filtered by settings.org_id to prevent ambiguity when
+    multiple orgs have the same chatwoot_account_id (e.g. account_id=1
+    is reused per Chatwoot instance, not globally unique).
+    """
     sb = get_supabase()
     try:
         resp = (
             sb.table("chatwoot_connections")
             .select("organization_id")
             .eq("chatwoot_account_id", account_id)
+            .eq("organization_id", settings.org_id)
             .maybe_single()
             .execute()
         )
