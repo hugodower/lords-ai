@@ -31,8 +31,21 @@ async def _get_deal_stage_for_context(org_id: str, contact_phone: str) -> str:
         return "01. Novo Contato"
 
 
-def _load_template(agent_type: str) -> str:
+def _load_template(agent_type: str, custom_path: Optional[str] = None) -> str:
+    if custom_path:
+        custom_template_path = TEMPLATES_DIR / custom_path
+        if custom_template_path.exists():
+            log.info("[AI_AGENT] template selected: %s", custom_template_path.name)
+            return custom_template_path.read_text(encoding="utf-8")
+        else:
+            log.warning(
+                "[AI_AGENT] custom template not found: %s, falling back to default",
+                custom_template_path.name,
+            )
+
+    # Fallback to default template
     template_path = TEMPLATES_DIR / f"{agent_type}_system_prompt.md"
+    log.info("[AI_AGENT] template selected (default): %s", template_path.name)
     if template_path.exists():
         return template_path.read_text(encoding="utf-8")
     log.warning("Template not found: %s", template_path)
@@ -54,7 +67,10 @@ async def build_context(
 ) -> str:
     """Build the full system prompt with verified data from Supabase."""
 
-    template = _load_template(agent_type)
+    template = _load_template(
+        agent_type=agent_type,
+        custom_path=agent_config.get("template_path"),
+    )
 
     # Fetch all org data from Supabase
     try:
