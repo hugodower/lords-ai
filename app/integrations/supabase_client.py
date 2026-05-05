@@ -380,6 +380,9 @@ async def get_org_by_chatwoot_account(account_id: int) -> Optional[str]:
     The lookup is filtered by settings.org_id to prevent ambiguity when
     multiple orgs have the same chatwoot_account_id (e.g. account_id=1
     is reused per Chatwoot instance, not globally unique).
+
+    Uses .limit(1) instead of .maybe_single() to avoid postgrest-py issuing
+    spurious 204 "Missing response" errors when rows do exist.
     """
     sb = get_supabase()
     try:
@@ -388,14 +391,16 @@ async def get_org_by_chatwoot_account(account_id: int) -> Optional[str]:
             .select("organization_id")
             .eq("chatwoot_account_id", account_id)
             .eq("organization_id", settings.org_id)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
-        org_id = resp.data["organization_id"] if resp and resp.data else None
+        rows = resp.data if resp else []
+        org_id = rows[0]["organization_id"] if rows else None
         if org_id:
             log.info("[CONFIG] Resolved chatwoot account_id=%s → org=%s", account_id, org_id)
         else:
-            log.warning("[CONFIG] No org found for chatwoot account_id=%s", account_id)
+            log.info("[CONFIG] No chatwoot_connection for account_id=%s in org=%s",
+                     account_id, settings.org_id)
         return org_id
     except Exception as exc:
         log.error("[CONFIG] FAILED to lookup org by chatwoot account %s: %s", account_id, exc)

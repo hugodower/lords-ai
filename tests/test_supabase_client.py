@@ -24,22 +24,23 @@ class TestGetOrgByChatwootAccount:
     def _build_mock_chain(self, response_data):
         """
         Build a chainable mock that mimics:
-            sb.table().select().eq().eq().maybe_single().execute()
+            sb.table().select().eq().eq().limit(1).execute()
 
         Returns the mock chain. Each .eq() is chainable to itself.
+        response_data should be a list (empty list = no rows found).
         """
         chain = MagicMock()
         chain.table.return_value = chain
         chain.select.return_value = chain
         chain.eq.return_value = chain
-        chain.maybe_single.return_value = chain
+        chain.limit.return_value = chain
         chain.execute.return_value = SimpleNamespace(data=response_data)
         return chain
 
     async def test_returns_org_id_when_match_found(self):
         """Happy path: account_id matches in current VPS scope -> returns org_id."""
         expected_org = "cc000000-0000-0000-0000-000000000001"
-        mock_chain = self._build_mock_chain({"organization_id": expected_org})
+        mock_chain = self._build_mock_chain([{"organization_id": expected_org}])
 
         with patch("app.integrations.supabase_client.get_supabase", return_value=mock_chain):
             result = await get_org_by_chatwoot_account(1)
@@ -48,7 +49,7 @@ class TestGetOrgByChatwootAccount:
 
     async def test_returns_none_when_no_match(self):
         """No row matches in this VPS scope -> returns None."""
-        mock_chain = self._build_mock_chain(None)
+        mock_chain = self._build_mock_chain([])
 
         with patch("app.integrations.supabase_client.get_supabase", return_value=mock_chain):
             result = await get_org_by_chatwoot_account(999)
@@ -61,7 +62,7 @@ class TestGetOrgByChatwootAccount:
         mock_chain.table.return_value = mock_chain
         mock_chain.select.return_value = mock_chain
         mock_chain.eq.return_value = mock_chain
-        mock_chain.maybe_single.return_value = mock_chain
+        mock_chain.limit.return_value = mock_chain
         mock_chain.execute.side_effect = Exception("Supabase down")
 
         with patch("app.integrations.supabase_client.get_supabase", return_value=mock_chain):
