@@ -1,5 +1,34 @@
 # Lebedenco Agro — Status Deploy Multi-tenant
 
+## Atualização 06/mai/26 — Etapa F APROVADA ✅
+
+**Smoke test concluído com sucesso em 14:30 (06/mai/26).**
+
+Hugo enviou mensagem teste do WhatsApp +5518996010895 → Chatwoot Lebedenco
+conv #26 → Ana respondeu corretamente.
+
+### Confirmações dos logs de produção
+- Bug 4 RESOLVIDO: lookup `chatwoot account_id=1 → org=31ddcc20-...` funcionou
+  perfeitamente (não cai mais no fallback hardcoded)
+- Webhook → debounce → context builder → Claude API → resposta enviada
+- Auto-label `01-novo-contato` aplicada corretamente
+- Pipeline detectou lead em "Novo Contato" (position 1)
+- Sandbox whitelist OK
+- Channel detection OK (WhatsApp via Channel::Api)
+
+### Última correção aplicada
+- `CLAUDE_API_KEY` foi rotacionada novamente (a anterior estava retornando
+  401 invalid x-api-key da Anthropic). Key nova validada via curl antes do deploy.
+
+### Pendências pós-Etapa F (não bloqueantes pra produção, mas necessárias)
+1. **Auto-atribuição da Ana ao Chatwoot** — não está acontecendo. Aurora
+   (LORDS Ads) já tem isso (virtual user a0000000-0000-0000-0000-000000000001).
+   Investigação em andamento.
+2. **Handoff humano → Ana para de responder** — não implementado pra Ana
+3. **Handoff Ana → humano** (sentiment/intent) — verificar se já existe
+4. **Bug "John Doe" persiste** — webhook CRM LORDS antigo continua ativo no
+   Chatwoot Lebedenco (Opção B conservadora mantida)
+
 ### Lebedenco Agro — Status Deploy (05/mai/26)
 
 **Estado:** Etapas A-E concluídas. Etapa F (smoke test) pendente.
