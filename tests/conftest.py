@@ -147,7 +147,7 @@ def mock_chatwoot():
         patch("app.integrations.chatwoot.chatwoot_client.send_message", new_callable=AsyncMock) as send,
         patch("app.integrations.chatwoot.chatwoot_client.send_private_note", new_callable=AsyncMock) as note,
         patch("app.integrations.chatwoot.chatwoot_client.assign_agent", new_callable=AsyncMock) as assign,
-        patch("app.integrations.chatwoot.chatwoot_client.add_label", new_callable=AsyncMock) as label,
+        patch("app.services.pipeline_manager.add_label_to_chatwoot", new_callable=AsyncMock) as label,
         patch("app.skills.handoff.chatwoot_client") as handoff_cw,
         patch("app.agents.base.chatwoot_client") as base_cw,
     ):
@@ -160,7 +160,6 @@ def mock_chatwoot():
             cw.send_message = AsyncMock(return_value={"id": 1})
             cw.send_private_note = AsyncMock(return_value={"id": 2})
             cw.assign_agent = AsyncMock(return_value={"id": 3})
-            cw.add_label = AsyncMock(return_value={"payload": ["handoff-ia"]})
 
         yield {
             "send_message": send,

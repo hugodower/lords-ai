@@ -56,7 +56,7 @@ async def get_active_agents(org_id: str) -> list[dict]:
     try:
         resp = (
             sb.table("agent_configs")
-            .select("agent_type, agent_name, is_active")
+            .select("agent_type, agent_name, is_active, chatwoot_agent_email, handoff_agent_id")
             .eq("organization_id", org_id)
             .eq("is_active", True)
             .execute()

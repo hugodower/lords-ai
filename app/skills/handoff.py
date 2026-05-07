@@ -87,7 +87,8 @@ async def perform_handoff(
             await chatwoot_client.assign_agent(conversation_id, handoff_agent_id)
 
         # Add label
-        await chatwoot_client.add_label(conversation_id, "handoff-ia")
+        from app.services.pipeline_manager import add_label_to_chatwoot
+        await add_label_to_chatwoot(org_id, conversation_id, "handoff-ia")
 
         # Save conversation to RAG before clearing
         try:
