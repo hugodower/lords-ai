@@ -1,5 +1,85 @@
 # Lebedenco Agro — Status Deploy Multi-tenant
 
+## Atualização 07/mai/26 — Fase 2 (handoff bugs) APROVADA ✅
+
+**Migration agent_configs.chatwoot_agent_email aplicada + 2 bugs corrigidos +
+validados em produção.**
+
+### Migration Supabase (manual via SQL Editor)
+- `ALTER TABLE agent_configs ADD COLUMN chatwoot_agent_email TEXT`
+- Ana populada: `chatwoot_agent_email='ana@ai.lebedenco.uk'`,
+  `handoff_agent_id=3` (Luan Machado, user_id no Chatwoot Lebedenco)
+- Aurora populada: `chatwoot_agent_email='aurora@ai.lordsads.uk'`
+  (preservar comportamento via fallback hardcoded)
+- Aurora `handoff_agent_id` mantido NULL (não tinha antes, decisão consciente)
+
+### Bugs corrigidos (commit 6a02b71)
+1. **Bug #1**: `get_active_agents()` em `app/integrations/supabase_client.py:59`
+   agora seleciona `chatwoot_agent_email` e `handoff_agent_id` (antes faltavam
+   no SELECT, causando fallback silencioso para Aurora email hardcoded)
+2. **Bug #2**: `app/skills/handoff.py:90` agora usa
+   `pipeline_manager.add_label_to_chatwoot()` (Opção A conservadora) em vez de
+   `chatwoot_client.add_label()` que não existia (causava AttributeError em
+   todos os handoffs, tanto Ana quanto Aurora)
+
+### Validações em produção
+- **Cenário 1 (auto-atribuição Ana)** ✅ — Conv #33: "Ana atribuiu a si
+  mesmo essa conversa" + painel mostra "Agente atribuído: Ana"
+- **Cenário 3 (handoff IA→humano)** ✅ — Conv #32: Ana detectou urgência
+  médica + gerou resumo estruturado WARM + atribuiu Luan + label
+  `01-novo-contato` aplicada
+
+### User criado no Chatwoot Lebedenco
+- Ana | id=5 | ana@ai.lebedenco.uk | role=Agente
+- (Luan Machado já existia | id=3, Wagner | id=4, Admin | id=1)
+
+### Pré-existente (dívida técnica não bloqueante)
+- 7 testes em `tests/test_sdr.py` e `tests/test_support.py` falham por
+  problemas de mock setup (não regressão da Fase 2 — confirmado via
+  experimento `git checkout HEAD~1`). Eram ERRORs antes (AttributeError
+  add_label), agora são FAILEDs por assertions de mock. Backlog separado.
+
+## Pendências pós-Fase 2 (próximas sessões)
+
+### Fase 3 — Pause per-conversation
+Quando humano (Luan/Wagner) se atribui à conversa no Chatwoot, Ana deve parar
+de responder. Quando humano desatribui (assignee=NULL) ou re-atribui pra Ana,
+Ana deve voltar.
+- Implementação proposta: Redis-based pause keyed por conversation_id
+- Modificar `main.py:assignment_handler` (~linha 418-489) pra pausar/despausar
+- Modificar `agents/base.py:process()` pra checar pause antes de responder
+- Estimativa: ~2h
+
+### Fase 4 — Progressão automática de etiquetas
+Ana só aplica `01-novo-contato`, nunca avança para `02-diagnostico-da-dor`,
+`03-protocolo-apresentado`, etc. Como labels Chatwoot ↔ stages do pipeline
+LORDS CRM, isso trava o funil inteiro em "Novo Contato".
+- Investigar lógica atual em `pipeline_manager.py`
+- Definir critérios de progressão (sinais conversacionais → trigger advance)
+- Implementar e testar
+- Estimativa: ~2-3h
+
+### Fase 5 — Calibração de gatilho de handoff
+Ana faz handoff cedo demais (qualquer menção a urgência médica → escalation).
+Refinar `sdr_system_prompt_ana.md` pra qualificar 2-3 perguntas antes de
+escalar. Handoff só em: pedido explícito, sintomas extremos (mortalidade),
+recusa de protocolo.
+- Estimativa: ~1h
+
+### Fase 6 — Follow-up reengajamento Lebedenco
+Aproveitar janela 24h da Meta WhatsApp pra reengajar leads ociosos. Worker
+de follow-up já existe (`app/services/followup_worker.py`) com cadência
+24h/48h/7d, mas templates são genéricos/Aurora. Criar templates Meta
+aprovados específicos pra Lebedenco (gado leiteiro), popular no Supabase.
+- Estimativa: ~2-3h
+
+### Bug crônico — "John Doe" Lebedenco
+Webhook do Chatwoot Lebedenco continua apontando para
+`https://www.lordsads.com.br/api/webhooks/chatwoot-events?token=...` (LORDS
+CRM endpoint, errado). Decisão atual (conservadora): manter ativo + adicionar
+webhook lords-ai em paralelo. Bug "John Doe" persiste mas isolado ao CRM
+LORDS. Decisão futura: deletar ou repointar.
+
 ## Atualização 06/mai/26 — Etapa F APROVADA ✅
 
 **Smoke test concluído com sucesso em 14:30 (06/mai/26).**
