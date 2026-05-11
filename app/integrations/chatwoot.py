@@ -135,6 +135,15 @@ class ChatwootClient:
         org_id: str = "",
     ) -> dict:
         """Send message using per-org credentials if available, fallback to global."""
+        # Validate text content before sending
+        if not text or not isinstance(text, str) or text.strip() == "":
+            log.warning(
+                "[CHATWOOT:VALIDATION] Aborting send_message: empty content "
+                "(conv=%s, org=%s, private=%s, text_type=%s, text_repr=%r)",
+                conversation_id, org_id, private, type(text).__name__, text
+            )
+            return {"error": "Empty or invalid message content"}
+
         conn = None
         if org_id:
             try:

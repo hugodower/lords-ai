@@ -39,7 +39,22 @@ async def generate_response(
         system=system_prompt,
         messages=messages,
     )
-    text = response.content[0].text
+    # Extract and concatenate all text blocks, ignore tool_use/thinking/etc
+    text_blocks = []
+    for block in response.content:
+        if hasattr(block, 'text') and block.text and block.text.strip():
+            text_blocks.append(block.text)
+    text = "\n\n".join(text_blocks).strip()
+
+    # Diagnostic logging for tool_use-only responses
+    if not text and response.usage.output_tokens > 0:
+        log.warning(
+            "[CLAUDE:NO_TEXT_BLOCK] Response had %d output tokens but no text block. "
+            "Likely tool_use-only response. Block types: %s",
+            response.usage.output_tokens,
+            [getattr(b, 'type', type(b).__name__) for b in response.content]
+        )
+
     tokens = response.usage.input_tokens + response.usage.output_tokens
     log.info("Claude response: %d tokens", tokens)
     return text, tokens
@@ -60,7 +75,22 @@ async def generate_extraction(
         temperature=0.0,
         messages=[{"role": "user", "content": prompt}],
     )
-    text = response.content[0].text
+    # Extract and concatenate all text blocks, ignore tool_use/thinking/etc
+    text_blocks = []
+    for block in response.content:
+        if hasattr(block, 'text') and block.text and block.text.strip():
+            text_blocks.append(block.text)
+    text = "\n\n".join(text_blocks).strip()
+
+    # Diagnostic logging for tool_use-only responses
+    if not text and response.usage.output_tokens > 0:
+        log.warning(
+            "[CLAUDE:NO_TEXT_BLOCK] Response had %d output tokens but no text block. "
+            "Likely tool_use-only response. Block types: %s",
+            response.usage.output_tokens,
+            [getattr(b, 'type', type(b).__name__) for b in response.content]
+        )
+
     tokens = response.usage.input_tokens + response.usage.output_tokens
     log.info("Haiku extraction: %d tokens", tokens)
     return text, tokens
@@ -84,7 +114,13 @@ async def classify_intent(message: str) -> str:
             ),
             messages=[{"role": "user", "content": message}],
         )
-        intent = response.content[0].text.strip().lower()
+        # Extract and concatenate all text blocks, ignore tool_use/thinking/etc
+        text_blocks = []
+        for block in response.content:
+            if hasattr(block, 'text') and block.text:
+                text_blocks.append(block.text)
+        intent_text = "\n\n".join(text_blocks).strip()
+        intent = intent_text.strip().lower()
         valid = {"normal", "raiva", "ameaca", "urgencia_medica", "assunto_juridico"}
         return intent if intent in valid else "normal"
     except Exception as e:
