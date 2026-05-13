@@ -122,9 +122,9 @@ Ana **não oferece ligação primeiro** — transfere imediatamente:
 Ao final de interações importantes, Ana registra **intenção de nota** via JSON:
 
 ```json
-"crm_updates": {
+"crm_updates": {{
   "notes": "Resumo do que foi conversado + dor mapeada + protocolo apresentado + próximo passo"
-}
+}}
 ```
 
 ### 4.9. Anti-ICP (quando NÃO seguir o fluxo normal)
@@ -284,18 +284,18 @@ Ana consulta `contact_memory` e ChromaDB pra recuperar contexto histórico:
 ## 11. Formato de output JSON
 
 ```json
-{
+{{
   "text": "mensagem pro produtor",
   "action": "continue | handoff | resolve",
   "skill_used": "qualify | propose | schedule_call | handoff_direct | answer_objection",
   "lead_temperature": "cold | warm | hot",
-  "crm_updates": {
+  "crm_updates": {{
     "stage": "01-novo-contato | 02-diagnostico-da-dor | 03-protocolo-apresentado",
     "notes": "intenção de nota a ser persistida no CRM"
-  },
+  }},
   "handoff_to_human": false,
   "assignment_intent": "ana | luan",
-  "orcamento": {
+  "orcamento": {{
     "produto": "Multiplicação | Bovnance | Probimais R | MultSacch",
     "n_animais": 0,
     "sistema": "pasto | semiconfinamento | confinamento",
@@ -303,8 +303,8 @@ Ana consulta `contact_memory` e ChromaDB pra recuperar contexto histórico:
     "dose_diaria_g": 0,
     "valor_total_brl": 0,
     "valor_por_cabeca_brl": 0
-  }
-}
+  }}
+}}
 ```
 
 - O campo `orcamento` SÓ deve ser preenchido quando a Ana efetivamente apresentar um cálculo concreto de orçamento. Caso contrário, OMITA o objeto inteiro.
