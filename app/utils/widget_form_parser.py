@@ -112,7 +112,11 @@ def is_likely_form_first_message(content: str, sender_name: str = "") -> bool:
         return False
 
     # Sender genérico é forte indício
-    generic_senders = {"john doe", "lead", "facebook lead", ""}
+    # TODO: Consolidar GENERIC_SENDERS em um único módulo
+    # (atualmente duplicado em main.py, widget_form_parser.py,
+    # conversation_state.py). Mover para app/utils/constants.py
+    # ou exportar de widget_form_parser e importar nos outros.
+    generic_senders = {"john doe", "lead", "facebook lead", "instagram lead", "meta lead", "visitor", "guest", ""}
     sender_is_generic = (sender_name or "").strip().lower() in generic_senders
 
     # Marcadores no content são essenciais

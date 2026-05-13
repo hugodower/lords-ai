@@ -32,6 +32,50 @@ from app.services.conversation_state import should_ask_for_name, extract_name_fr
 
 log = get_logger("agent:base")
 
+
+def is_allowed_by_sandbox(agent_config: dict, channel: str, contact_phone: str, org_id: str) -> tuple[bool, str]:
+    """
+    Check if a message should be allowed through sandbox filtering.
+
+    Args:
+        agent_config: Agent configuration from database
+        channel: Channel name (e.g. "WhatsApp", "Messenger", "Site Widget")
+        contact_phone: Contact phone number (may be empty for non-WhatsApp)
+        org_id: Organization ID (for logging)
+
+    Returns:
+        Tuple of (is_allowed, reason_if_blocked)
+    """
+    sandbox_mode = agent_config.get("sandbox_mode", False)
+    sandbox_phones = agent_config.get("sandbox_phones", [])
+
+    # Sandbox inativo → libera tudo
+    if not sandbox_mode:
+        return True, ""
+
+    # Sandbox ativo + canal WhatsApp → checa lista de phones
+    if channel == "WhatsApp":
+        if not contact_phone:
+            return False, "WhatsApp without phone is invalid"
+
+        # Normalize phone for comparison
+        normalized_contact = normalize_phone(contact_phone)
+
+        # Normalize all allowed phones
+        normalized_allowed = {
+            normalize_phone(p.strip())
+            for p in sandbox_phones
+            if p and p.strip()
+        }
+
+        if normalized_contact in normalized_allowed:
+            return True, ""
+        else:
+            return False, f"Phone {contact_phone} not in allowed list"
+
+    # Sandbox ativo + qualquer outro canal → bloqueia
+    return False, f"Channel {channel} blocked while sandbox active"
+
 # Approximate cost per token for claude-sonnet-4-20250514
 COST_PER_TOKEN = 0.000003  # ~$3/M input, varies
 
@@ -73,36 +117,21 @@ class BaseAgent(ABC):
             return ProcessMessageResponse(action="ignored", error="Agents paused")
 
         # ── Sandbox guard ──────────────────────────────────────────
-        if settings.sandbox_mode:
-            allowed = {
-                normalize_phone(p.strip())
-                for p in settings.sandbox_phones.split(",")
-                if p.strip()
-            }
-            # Also include phones from DB agent_config
-            db_phones = agent_config.get("sandbox_phones") or []
-            for p in db_phones:
-                if p.strip():
-                    allowed.add(normalize_phone(p.strip()))
-
-            caller = normalize_phone(contact_phone) if contact_phone else ""
-            if caller and caller not in allowed:
-                # WhatsApp contact not in allowlist
+        sandbox_allowed, sandbox_reason = is_allowed_by_sandbox(
+            agent_config, channel, contact_phone, org_id
+        )
+        if not sandbox_allowed:
+            if channel == "WhatsApp":
                 log.info(
-                    "[SANDBOX] Phone %s not in allowed list, ignoring silently",
-                    contact_phone,
+                    "[SANDBOX] Blocked: %s for org %s",
+                    sandbox_reason, org_id,
                 )
-                return ProcessMessageResponse(action="ignored", error="Sandbox: phone not allowed")
-            elif not caller and not chatwoot_contact_id:
-                # No phone AND no chatwoot_id — block
-                log.info("[SANDBOX] No phone and no chatwoot_id, ignoring")
-                return ProcessMessageResponse(action="ignored", error="Sandbox: no identifier")
-            elif not caller and chatwoot_contact_id:
-                # Non-WhatsApp channel with chatwoot_id — allow through sandbox
+            else:
                 log.info(
-                    "[SANDBOX] Non-WhatsApp channel (%s), chatwoot_id=%s, allowing",
-                    channel, chatwoot_contact_id,
+                    "[SANDBOX] Blocked: channel %s blocked while sandbox active "
+                    "(org %s, conv %s)", channel, org_id, conversation_id,
                 )
+            return ProcessMessageResponse(action="ignored", error=f"Sandbox: {sandbox_reason}")
 
         # ── Layer 0: Business hours ──────────────────────────────────
         if not await is_within_business_hours(org_id):

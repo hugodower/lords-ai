@@ -158,6 +158,21 @@ conv #26 → Ana respondeu corretamente.
 - [ ] Rotacionar `CHATWOOT_API_TOKEN` da Lebedenco (security debt)
 - [ ] Configurar Google Calendar OAuth para Lebedenco (Item 3 lords-ai global)
 
+### ✅ Sandbox Multi-canal — CORRIGIDO (13/mai/26)
+
+**Problema original:** O modo sandbox permitia passagem de mensagens do Facebook/Instagram quando deveria bloquear esses canais completamente, causando confusão durante testes.
+
+**Comportamento corrigido (fonte única no painel super admin):**
+- **Sandbox INATIVO** → Ana responde tudo em todos os canais sem filtro
+- **Sandbox ATIVO** → Ana só responde phones autorizados via canal WhatsApp. TODOS os outros canais (Messenger, Site Widget, futuros) ficam BLOQUEADOS
+- **Agente inativo** → Ana não responde nada, em nenhum canal
+
+**Melhorias implementadas:**
+- Fonte única: configuração via `agent_configs.sandbox_mode` e `.sandbox_phones` no banco
+- Env vars `SANDBOX_MODE`/`SANDBOX_PHONES` deprecadas (logs warnings)
+- Normalização de phone: `+55 18 99601-0895`, `5518996010895`, `(18) 99601-0895` são equivalentes
+- Logs específicos por tipo de bloqueio para debug
+
 **Configuração de Inboxes Lebedenco:**
 | Inbox ID | Tipo | Descrição | Diferenciação Ana |
 |----------|------|-----------|-------------------|

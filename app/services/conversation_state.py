@@ -228,7 +228,11 @@ async def should_ask_for_name(
         True se devemos perguntar o nome, False caso contrário
     """
     # Se já temos nome válido, não perguntar
-    if contact_name and contact_name.strip().lower() not in {"john doe", "lead", "facebook lead", ""}:
+    # TODO: Consolidar GENERIC_SENDERS em um único módulo
+    # (atualmente duplicado em main.py, widget_form_parser.py,
+    # conversation_state.py). Mover para app/utils/constants.py
+    # ou exportar de widget_form_parser e importar nos outros.
+    if contact_name and contact_name.strip().lower() not in {"john doe", "lead", "facebook lead", "instagram lead", "meta lead", "visitor", "guest", ""}:
         return False
 
     # Verificar status de resolução

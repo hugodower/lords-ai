@@ -136,6 +136,7 @@ Provisionar `lords-ai` na VPS Lebedenco (`port.lebedencoagro.uk`).
 |---|---|---|
 | `ChatwootClient.add_label` method missing | Aurora não consegue fazer handoff automático | ❌ Não bloqueia Ana (handoff só por pedido explícito) |
 | ~~Bug "John Doe" followup congelado~~ | ~~Follow-ups com nome placeholder~~ | ✅ **CORRIGIDO** — Parser renomeado + name resolution + follow-up worker desabilitado |
+| ~~Bug sandbox multi-canal~~ | ~~Sandbox permitia DMs Facebook/Instagram quando deveria bloquear~~ | ✅ **CORRIGIDO** — Fonte única no painel super admin + bloqueio consistente por canal |
 | `get_org_by_chatwoot_account` returns 204 | Fallback pra ORG_ID hardcoded; funciona por acaso na LORDS | ⚠️ **Pendente** — vai falhar na Lebedenco se não corrigir |
 | Google Calendar `invalid_grant` | Aurora não agenda reuniões | ❌ Não bloqueia Ana (venda produto direto) |
 | WhatsApp followup creds 204 | Followups falham silenciosamente | ❌ Não bloqueia Ana (follow-up desligado) |

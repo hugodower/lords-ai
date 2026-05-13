@@ -1,4 +1,7 @@
 from pydantic_settings import BaseSettings
+import logging
+
+logger = logging.getLogger("config")
 
 
 class Settings(BaseSettings):
@@ -28,7 +31,8 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
 
-    # Sandbox
+    # Sandbox (DEPRECATED: use agent_configs.sandbox_mode and .sandbox_phones instead)
+    # TODO: Remove after migration to DB-only config (per-org in super admin panel)
     sandbox_mode: bool = True
     sandbox_phones: str = "+5518996597391"  # comma-separated allowed phones
 

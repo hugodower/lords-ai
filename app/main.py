@@ -302,7 +302,11 @@ async def chatwoot_webhook(request: Request):
                 log.error("[WIDGET_FORM:ERROR] Conv %s — %s, segue fluxo normal", conversation_id, exc)
 
         # Se sender ainda é genérico após tentativa de parse, marcar como pending_capture
-        if sender_is_generic and contact_name.strip().lower() in {"john doe", "lead", "facebook lead", ""}:
+        # TODO: Consolidar GENERIC_SENDERS em um único módulo
+        # (atualmente duplicado em main.py, widget_form_parser.py,
+        # conversation_state.py). Mover para app/utils/constants.py
+        # ou exportar de widget_form_parser e importar nos outros.
+        if sender_is_generic and contact_name.strip().lower() in {"john doe", "lead", "facebook lead", "instagram lead", "meta lead", "visitor", "guest", ""}:
             try:
                 await mark_as_pending_capture(
                     org_id=org_id,
