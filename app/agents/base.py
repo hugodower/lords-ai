@@ -427,7 +427,7 @@ class BaseAgent(ABC):
         # ── Layer 5: Response validation ─────────────────────────────
         products = await sb.get_products(org_id)
         forbidden = await sb.get_forbidden_topics(org_id)
-        validation = validate_response(output.text, products, forbidden)
+        validation = validate_response(output, products, forbidden)
 
         elapsed_ms = int((time.time() - start_time) * 1000)
         cost = tokens_used * COST_PER_TOKEN if tokens_used else None

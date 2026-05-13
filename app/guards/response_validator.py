@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.models.schemas import AgentOutput
 
 from app.utils.logger import get_logger
 
@@ -46,8 +49,51 @@ class ValidationResult:
     check_name: Optional[str] = None
 
 
+def _validate_forbidden_only(text: str, forbidden_topics: list[str]) -> ValidationResult:
+    """Validate only forbidden topics and inappropriate content, skip price validation."""
+    if not text or len(text.strip()) < 5:
+        return ValidationResult(False, "Resposta vazia ou muito curta", "too_short")
+
+    if len(text) > 1000:
+        return ValidationResult(False, "Resposta muito longa (>1000 chars)", "too_long")
+
+    text_lower = text.lower()
+
+    # Check forbidden promises
+    for word in PROMISE_WORDS:
+        if word in text_lower:
+            log.warning("[VALIDATOR] Forbidden promise word: %s", word)
+            return ValidationResult(
+                False,
+                f"Resposta contém promessa proibida: '{word}'",
+                "blocked_promise",
+            )
+
+    # Check forbidden topics
+    for topic in forbidden_topics:
+        if topic.lower() in text_lower:
+            log.warning("[VALIDATOR] Forbidden topic: %s", topic)
+            return ValidationResult(
+                False,
+                f"Resposta menciona tópico proibido: '{topic}'",
+                "blocked_forbidden",
+            )
+
+    # Check inappropriate tone
+    for word in INAPPROPRIATE_WORDS:
+        if word in text_lower:
+            log.warning("[VALIDATOR] Inappropriate word: %s", word)
+            return ValidationResult(
+                False,
+                f"Resposta contém linguagem inadequada: '{word}'",
+                "blocked_tone",
+            )
+
+    return ValidationResult(True)
+
+
 def validate_response(
-    text: str,
+    output: "AgentOutput",
     products: list[dict],
     forbidden_topics: list[str],
 ) -> ValidationResult:
@@ -55,6 +101,19 @@ def validate_response(
 
     Returns ValidationResult with passed=True if OK, or passed=False with reason.
     """
+    # Skip price validation if há orçamento estruturado preenchido
+    if (output.orcamento
+        and output.orcamento.valor_total_brl
+        and output.orcamento.valor_total_brl > 0):
+        log.info(
+            "[VALIDATOR] Skipping price check — "
+            f"orcamento estruturado present: R$ {output.orcamento.valor_total_brl}"
+        )
+        # Still validate forbidden topics in text
+        return _validate_forbidden_only(output.text, forbidden_topics)
+
+    text = output.text
+
     # 1. Empty or too short
     if not text or len(text.strip()) < 5:
         log.warning("[VALIDATOR] Response too short: %d chars", len(text) if text else 0)

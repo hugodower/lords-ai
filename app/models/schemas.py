@@ -56,6 +56,16 @@ class ScheduleInfo(BaseModel):
     interest: Optional[str] = None
 
 
+class OrcamentoInfo(BaseModel):
+    produto: Optional[str] = None
+    n_animais: Optional[int] = None
+    sistema: Optional[str] = None  # pasto | semiconfinamento | confinamento
+    duracao_dias: Optional[int] = None
+    dose_diaria_g: Optional[float] = None
+    valor_total_brl: Optional[float] = None
+    valor_por_cabeca_brl: Optional[float] = None
+
+
 class AgentOutput(BaseModel):
     text: str
     action: str = "continue"  # continue | handoff | schedule | update_crm
@@ -64,6 +74,7 @@ class AgentOutput(BaseModel):
     summary: Optional[str] = None
     crm_updates: Optional[CrmUpdates] = None
     schedule: Optional[ScheduleInfo] = None
+    orcamento: Optional[OrcamentoInfo] = None
 
 
 # ── Knowledge ────────────────────────────────────────────────────────
