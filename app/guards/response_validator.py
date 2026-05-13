@@ -54,8 +54,8 @@ def _validate_forbidden_only(text: str, forbidden_topics: list[str]) -> Validati
     if not text or len(text.strip()) < 5:
         return ValidationResult(False, "Resposta vazia ou muito curta", "too_short")
 
-    if len(text) > 1000:
-        return ValidationResult(False, "Resposta muito longa (>1000 chars)", "too_long")
+    if len(text) > 1500:
+        return ValidationResult(False, "Resposta muito longa (>1500 chars)", "too_long")
 
     text_lower = text.lower()
 
@@ -120,9 +120,9 @@ def validate_response(
         return ValidationResult(False, "Resposta vazia ou muito curta", "too_short")
 
     # 2. Too long
-    if len(text) > 1000:
+    if len(text) > 1500:
         log.warning("[VALIDATOR] Response too long: %d chars", len(text))
-        return ValidationResult(False, "Resposta muito longa (>1000 chars)", "too_long")
+        return ValidationResult(False, "Resposta muito longa (>1500 chars)", "too_long")
 
     text_lower = text.lower()
 
