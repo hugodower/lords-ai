@@ -28,6 +28,7 @@ from app.services.conversation_resolver import resolve_conversation, schedule_re
 from app.skills.handoff import perform_handoff
 from app.utils.logger import get_logger
 from app.utils.phone import normalize_phone, extract_phone_number
+from app.services.conversation_state import should_ask_for_name, extract_name_from_message, mark_as_captured
 
 log = get_logger("agent:base")
 
@@ -200,6 +201,29 @@ class BaseAgent(ABC):
                         )
             except Exception as cap_err:
                 log.warning("[CHANNEL:CAPTURE] Error: %s", cap_err)
+
+        # ── Name capture for placeholder contacts ──────────────────
+        try:
+            # Check if we should ask for name or if user provided it
+            if await should_ask_for_name(org_id, contact_phone, chatwoot_contact_id, contact_name):
+                # Try to extract name from message
+                extracted_name = extract_name_from_message(message)
+                if extracted_name:
+                    # Mark as captured and update Chatwoot
+                    success = await mark_as_captured(
+                        org_id=org_id,
+                        captured_name=extracted_name,
+                        contact_phone=contact_phone,
+                        chatwoot_contact_id=chatwoot_contact_id
+                    )
+                    if success:
+                        contact_name = extracted_name  # Update for current processing
+                        log.info(
+                            "[NAME_CAPTURE] Captured name '%s' from message (conv=%s)",
+                            extracted_name, conversation_id
+                        )
+        except Exception as name_err:
+            log.warning("[NAME_CAPTURE] Error: %s", name_err)
 
         # Log incoming message
         await log_interaction(

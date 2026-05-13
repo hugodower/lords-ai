@@ -125,18 +125,20 @@ Provisionar `lords-ai` na VPS Lebedenco (`port.lebedencoagro.uk`).
 6. Smoke test Ana via WhatsApp Lebedenco
 
 ### Pendência Lebedenco
-- **Bug "John Doe":** webhook do Chatwoot Lebedenco aponta atualmente pra `lordsads.com.br/api/webhooks/chatwoot-events` (LORDS CRM, lugar errado). Precisa repointar quando Ana for ao ar.
+- **Webhook configurado:** Chatwoot Lebedenco agora aponta corretamente para `https://ai.lebedencoagro.uk/api/v1/webhook/chatwoot`
+- **Follow-up automático:** Temporariamente **desligado** via `FOLLOWUP_WORKER_ENABLED=false` em produção. Será redesenhado como follow-up estratégico em sprint futura
 
 ---
 
 ## 🐛 Bugs preexistentes mapeados
 
-| Bug | Impacto | Bloqueia Ana? |
+| Bug | Impacto | Status |
 |---|---|---|
-| `ChatwootClient.add_label` method missing | Aurora não consegue fazer handoff automático | ❌ Não — Ana faz handoff só por pedido explícito |
-| `get_org_by_chatwoot_account` returns 204 | Fallback pra ORG_ID hardcoded; funciona por acaso na LORDS | ⚠️ **Sim** — vai falhar na Lebedenco se não corrigir antes da Fase 3 |
-| Google Calendar `invalid_grant` | Aurora não agenda reuniões | ❌ Não — Ana não agenda reuniões (Lebedenco vende produto direto) |
-| WhatsApp followup creds 204 | Followups falham silenciosamente | ❌ Não — separar do escopo Ana |
+| `ChatwootClient.add_label` method missing | Aurora não consegue fazer handoff automático | ❌ Não bloqueia Ana (handoff só por pedido explícito) |
+| ~~Bug "John Doe" followup congelado~~ | ~~Follow-ups com nome placeholder~~ | ✅ **CORRIGIDO** — Parser renomeado + name resolution + follow-up worker desabilitado |
+| `get_org_by_chatwoot_account` returns 204 | Fallback pra ORG_ID hardcoded; funciona por acaso na LORDS | ⚠️ **Pendente** — vai falhar na Lebedenco se não corrigir |
+| Google Calendar `invalid_grant` | Aurora não agenda reuniões | ❌ Não bloqueia Ana (venda produto direto) |
+| WhatsApp followup creds 204 | Followups falham silenciosamente | ❌ Não bloqueia Ana (follow-up desligado) |
 
 ---
 

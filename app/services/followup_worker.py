@@ -5,6 +5,7 @@ import asyncio
 import json as _json
 from datetime import datetime, timedelta, timezone
 
+from app.config import settings
 from app.integrations import supabase_client as sb
 from app.integrations.chatwoot import chatwoot_client
 from app.services.whatsapp_sender import send_template
@@ -48,6 +49,13 @@ async def start_worker() -> None:
     """Main worker loop — polls followup_queue every 60s."""
     global _shutdown
     _shutdown = False
+
+    # Check if follow-up worker is disabled via feature flag
+    if not settings.followup_worker_enabled:
+        log.warning("[FOLLOWUP:WORKER] Worker disabled via FOLLOWUP_WORKER_ENABLED flag")
+        while not _shutdown:
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+        return
 
     log.info("[FOLLOWUP:WORKER] Worker started — polling every %ds", POLL_INTERVAL_SECONDS)
 

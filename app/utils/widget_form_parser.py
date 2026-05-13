@@ -1,9 +1,9 @@
 """
-Parser de Meta Lead Ads vindos via Chatwoot.
+Parser de pre-chat forms vindos via Chatwoot Site Widget.
 
-Quando um lead preenche um formulário Meta Lead Ad e a integração
-entrega no Chatwoot, o sender vira "John Doe" (placeholder) e os
-dados reais ficam no content da mensagem como texto formatado:
+Quando um visitante preenche o pre-chat form do Site Widget do Chatwoot
+e o contato é criado como "John Doe" (placeholder), os dados reais ficam
+no content da primeira mensagem como texto formatado:
 
     Pergunta 1: Resposta 1
     Full name: Nome Real
@@ -12,7 +12,7 @@ dados reais ficam no content da mensagem como texto formatado:
     Pergunta 2: Resposta 2
     ...
 
-Este módulo extrai esses dados pra que possam ser usados para
+Este módulo extrai esses dados para que possam ser usados para
 atualizar o contato com informação real.
 """
 from __future__ import annotations
@@ -21,27 +21,27 @@ import re
 from typing import Optional
 
 # Heurística de detecção: precisa ter PELO MENOS 2 destes campos
-# pra considerar que é um Lead Ad do Meta
+# pra considerar que é um pre-chat form do Site Widget
 _REQUIRED_MARKERS = ("Full name:", "Phone number:")
 
 
-def parse_meta_lead_ad(content: str) -> Optional[dict]:
+def parse_widget_form_data(content: str) -> Optional[dict]:
     """
-    Parse Meta Lead Ad form data from message content.
+    Parse pre-chat form data from Chatwoot Site Widget message content.
 
     Args:
         content: Texto da mensagem do Chatwoot (payload.content)
 
     Returns:
         dict com chaves: name, phone, email, city, custom_attributes
-        ou None se não for detectado como Lead Ad
+        ou None se não for detectado como widget form
 
     Example:
         >>> content = '''Etapa: Cria
         ... Full name: Jose Vieira dos Santos
         ... Phone number: (38) 9996-7762
         ... City: Brasília de Minas'''
-        >>> result = parse_meta_lead_ad(content)
+        >>> result = parse_widget_form_data(content)
         >>> result["name"]
         'Jose Vieira dos Santos'
         >>> result["phone"]
@@ -97,16 +97,16 @@ def parse_meta_lead_ad(content: str) -> Optional[dict]:
     return parsed
 
 
-def is_likely_meta_lead_ad(content: str, sender_name: str = "") -> bool:
+def is_likely_form_first_message(content: str, sender_name: str = "") -> bool:
     """
-    Verifica rapidamente se a mensagem parece ser de um Meta Lead Ad.
+    Verifica rapidamente se a mensagem parece ser de um pre-chat form do Site Widget.
 
     Args:
         content: Texto da mensagem
-        sender_name: Nome do sender (geralmente "John Doe" pra leads)
+        sender_name: Nome do sender (geralmente "John Doe" para widget forms)
 
     Returns:
-        True se parecer Lead Ad, False caso contrário
+        True se parecer widget form, False caso contrário
     """
     if not content:
         return False

@@ -14,6 +14,33 @@ BRT = timezone(timedelta(hours=-3))
 
 log = get_logger("context_builder")
 
+
+def _detect_inbox_origin(channel: str, conversation_meta: dict = None) -> str:
+    """
+    Detecta origem do lead baseado no canal e metadados.
+
+    Returns:
+        'lp_whatsapp': WhatsApp vindo das LPs (Inbox 4)
+        'lp_widget': Site Widget vindo das LPs (Inbox 5)
+        'meta_dm': DM direto do Messenger/Instagram (Inbox 3)
+    """
+    # Mapeamento baseado no brief - IDs das inboxes Lebedenco
+    if channel == "WhatsApp":
+        # Inbox 4: WhatsApp Cloud API (+551832175059)
+        # Leads das LPs que clicam no botão wa.me
+        return "lp_whatsapp"
+    elif channel == "Site":
+        # Inbox 5: Site Widget embedado nas LPs
+        # Visitante anônimo com pre-chat form
+        return "lp_widget"
+    elif channel in ("Messenger", "Instagram"):
+        # Inbox 3: Meta Business Suite (Messenger unificado)
+        # DMs diretos sem contexto da LP
+        return "meta_dm"
+    else:
+        # Email, Telegram, etc. - tratar como DM direto
+        return "meta_dm"
+
 TEMPLATES_DIR = Path(__file__).parent.parent.parent / "templates"
 
 
@@ -295,52 +322,86 @@ async def build_context(
         deal_stage=await _get_deal_stage_for_context(org_id, contact_phone),
     )
 
-    # Inject channel-specific instructions (with WhatsApp capture for non-WA channels)
+    # Detect origin and inject specific instructions
+    inbox_origin = _detect_inbox_origin(channel)
+
+    if inbox_origin == "lp_whatsapp":
+        # Inbox 4: WhatsApp das LPs - produtor tem contexto
+        prompt += """
+
+## ORIGEM: LP WHATSAPP
+O produtor já visitou nosso material da Lebedenco e preencheu o form com interesse específico.
+ELE JÁ CONHECE A EMPRESA e nossos produtos.
+
+**ABORDAGEM:** Pular apresentação institucional. Ir direto para:
+- "Vi que você está interessado no nosso protocolo/suplemento para [gado de corte/leite]"
+- Fazer perguntas de qualificação sobre o rebanho atual
+- Diagnosticar necessidades específicas
+- Apresentar protocolo adequado ao perfil
+
+**TOM:** Consultivo, direto, especialista. O lead já está "aquecido"."""
+
+    elif inbox_origin == "lp_widget":
+        # Inbox 5: Site Widget das LPs - dados via pre-chat form
+        prompt += """
+
+## ORIGEM: LP WIDGET
+O produtor preencheu pre-chat form no nosso site (gado-de-corte ou gado-de-leite).
+ELE JÁ TEM INTERESSE ESPECÍFICO e visitou nosso conteúdo.
+
+**ABORDAGEM:** Pular apresentação institucional. Focar em:
+- Referenciar o material que ele estava vendo
+- "Vi que você estava vendo nosso conteúdo sobre [protocolo/gado de corte/leite]"
+- Qualificar necessidades específicas do rebanho
+- Avançar para diagnóstico técnico
+
+**TOM:** Especialista, consultivo, assumir interesse prévio."""
+
+    elif inbox_origin == "meta_dm":
+        # Inbox 3: DM direto - pode não ter contexto
+        prompt += """
+
+## ORIGEM: META DM
+Produtor enviou DM direto pelo Facebook/Instagram. PODE NÃO TER CONTEXTO da Lebedenco.
+Ele pode estar em descoberta inicial ou resposta a algum post/anúncio.
+
+**ABORDAGEM:** Descobrir contexto primeiro:
+- "Oi! Como posso te ajudar?"
+- Se não mencionar Lebedenco/protocolo: apresentar brevemente a empresa
+- "Aqui é a Ana da Lebedenco Agro, trabalhamos com protocolos nutricionais para gado"
+- Então qualificar interesse e necessidades
+
+**TOM:** Acolhedor, descobrir intenção, apresentação suave quando necessário."""
+
+    # Add channel-specific technical instructions
     if channel != "WhatsApp":
-        _channel_instructions = {
+        _channel_capture_instructions = {
             "Instagram": (
-                "Você está conversando pelo Instagram Direct. "
-                "Seja visual e dinâmica. Mensagens podem ser um pouco mais longas que no WhatsApp.\n\n"
-                "CAPTURA DE WHATSAPP: Quando o lead demonstrar interesse (NÃO no primeiro contato, "
-                "espere ele engajar), peça o WhatsApp de forma natural. Exemplo: "
-                "'Que legal que se interessou! Pra eu te passar mais detalhes, qual seu WhatsApp? "
-                "Fica mais fácil a comunicação 😊'. NÃO peça logo na primeira mensagem, "
-                "espere o lead demonstrar interesse primeiro."
+                "\n**CANAL INSTAGRAM:** Seja visual e dinâmica. Quando demonstrar interesse, "
+                "peça WhatsApp: 'Pra te passar mais detalhes, qual seu WhatsApp? 😊'"
             ),
             "Messenger": (
-                "Você está conversando pelo Facebook Messenger. "
-                "Tom amigável e acessível.\n\n"
-                "CAPTURA DE WHATSAPP: Quando o lead demonstrar interesse, peça o WhatsApp "
-                "naturalmente. Exemplo: 'Pra gente continuar essa conversa de forma mais "
-                "prática, me passa seu WhatsApp? Nosso time vai te atender por lá 😊'. "
-                "NÃO peça logo na primeira mensagem."
+                "\n**CANAL MESSENGER:** Tom amigável. Quando demonstrar interesse, "
+                "peça WhatsApp: 'Pra continuar mais prático, me passa seu WhatsApp? 😊'"
             ),
             "Site": (
-                "Você está conversando pelo chat do site. "
-                "O visitante pode sair a qualquer momento. Seja objetiva.\n\n"
-                "CAPTURA DE WHATSAPP/EMAIL: No chat do site o visitante pode fechar a janela "
-                "a qualquer momento. Tente capturar WhatsApp ou email cedo na conversa "
-                "(após a segunda mensagem). Exemplo: 'Pra não perder nosso contato quando "
-                "fechar essa janela, me passa seu WhatsApp ou email que continuo por lá! 😊'"
+                "\n**CANAL SITE:** Visitante pode sair a qualquer momento. "
+                "Capturar WhatsApp/email na 2ª mensagem: 'Pra não perder contato, "
+                "me passa seu WhatsApp ou email? 😊'"
             ),
             "Email": (
-                "Você está conversando por email. "
-                "Pode usar textos mais longos e estruturados.\n\n"
-                "CAPTURA DE WHATSAPP: Se fizer sentido no fluxo da conversa, "
-                "ofereça continuar pelo WhatsApp para respostas mais rápidas."
+                "\n**CANAL EMAIL:** Textos estruturados OK. "
+                "Se fizer sentido, ofereça WhatsApp para respostas rápidas."
             ),
             "Telegram": (
-                "Você está conversando pelo Telegram. "
-                "Mantenha as mensagens curtas e objetivas.\n\n"
-                "CAPTURA DE WHATSAPP: Se o lead demonstrar interesse, sugira "
-                "continuar pelo WhatsApp para facilitar o atendimento."
+                "\n**CANAL TELEGRAM:** Mensagens curtas. "
+                "Se interessado, sugira WhatsApp para facilitar atendimento."
             ),
         }
-        channel_text = _channel_instructions.get(channel, (
-            f"Você está conversando pelo canal {channel}. "
-            "Mantenha as mensagens profissionais e objetivas."
+        capture_text = _channel_capture_instructions.get(channel, (
+            f"\n**CANAL {channel.upper()}:** Mantenha mensagens profissionais e objetivas."
         ))
-        prompt += f"\n\n## CANAL DE COMUNICAÇÃO\n{channel_text}"
+        prompt += capture_text
 
     # Inject long-term contact memory if available
     if contact_memory:

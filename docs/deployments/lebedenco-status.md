@@ -73,12 +73,15 @@ de follow-up já existe (`app/services/followup_worker.py`) com cadência
 aprovados específicos pra Lebedenco (gado leiteiro), popular no Supabase.
 - Estimativa: ~2-3h
 
-### Bug crônico — "John Doe" Lebedenco
-Webhook do Chatwoot Lebedenco continua apontando para
-`https://www.lordsads.com.br/api/webhooks/chatwoot-events?token=...` (LORDS
-CRM endpoint, errado). Decisão atual (conservadora): manter ativo + adicionar
-webhook lords-ai em paralelo. Bug "John Doe" persiste mas isolado ao CRM
-LORDS. Decisão futura: deletar ou repointar.
+### ✅ Bug "John Doe" — CORRIGIDO
+Webhook configurado corretamente para `https://ai.lebedencoagro.uk/api/v1/webhook/chatwoot`.
+Bug original era follow-up worker usando dados "congelados" (corrigido em 12/mai/26).
+
+**Soluções implementadas:**
+- Parser renomeado: `widget_form_parser.py` (semântica correta)
+- Name resolution: Ana captura nome via conversa + atualiza Chatwoot
+- Follow-up worker: temporariamente desligado (`FOLLOWUP_WORKER_ENABLED=false`)
+- Diferenciação por canal: WhatsApp LP vs Site Widget vs Messenger DM
 
 ## Atualização 06/mai/26 — Etapa F APROVADA ✅
 
@@ -106,8 +109,7 @@ conv #26 → Ana respondeu corretamente.
    Investigação em andamento.
 2. **Handoff humano → Ana para de responder** — não implementado pra Ana
 3. **Handoff Ana → humano** (sentiment/intent) — verificar se já existe
-4. **Bug "John Doe" persiste** — webhook CRM LORDS antigo continua ativo no
-   Chatwoot Lebedenco (Opção B conservadora mantida)
+4. ~~**Bug "John Doe" persiste**~~ — ✅ **CORRIGIDO** (12/mai/26)
 
 ### Lebedenco Agro — Status Deploy (05/mai/26)
 
@@ -152,14 +154,19 @@ conv #26 → Ana respondeu corretamente.
 
 **Pendências conhecidas:**
 - [ ] Etapa F: smoke test end-to-end (Ana respondendo no WhatsApp)
-- [ ] Bug "John Doe" persiste — webhook CRM LORDS antigo ainda recebe
-      eventos da Lebedenco. Decisão pendente: deletar ou repointar
-      para endpoint que processe corretamente o payload
+- [x] ~~Bug "John Doe" persiste~~ — ✅ **CORRIGIDO** (12/mai/26)
 - [ ] Rotacionar `CHATWOOT_API_TOKEN` da Lebedenco (security debt)
 - [ ] Configurar Google Calendar OAuth para Lebedenco (Item 3 lords-ai global)
 
+**Configuração de Inboxes Lebedenco:**
+| Inbox ID | Tipo | Descrição | Diferenciação Ana |
+|----------|------|-----------|-------------------|
+| 3 | Messenger (Meta Business Suite) | Facebook + Instagram unificados | DM direto → apresentação suave |
+| 4 | WhatsApp Cloud API (+551832175059) | Leads das LPs + DMs orgânicos | LP → direto p/ qualificação |
+| 5 | Site Widget | Widget embedado nas LPs | Form preenchido → direto p/ diagnóstico |
+
 **Diferenças vs. deploy LORDS Ads (referência):**
-- Org: Lebedenco usa nome "Ana" (config no Supabase via tabela
-  `organization_agents` ou similar — verificar)
+- Org: Lebedenco usa nome "Ana" (config no Supabase via tabela `organization_agents`)
+- Inboxes: 3 ativas (vs. 1 LORDS)
 - Sandbox phones diferentes
-- Mantém webhook legado CRM LORDS ativo (LORDS deploy não tem essa duplicação)
+- Follow-up worker: desligado (vs. ativo LORDS)

@@ -13,7 +13,8 @@ from app.config import settings
 from app.agents.sdr import sdr_agent
 from app.agents.support import support_agent
 from app.utils.campaign_extractor import extract_campaign_context
-from app.utils.meta_lead_parser import parse_meta_lead_ad, is_likely_meta_lead_ad
+from app.utils.widget_form_parser import parse_widget_form_data, is_likely_form_first_message
+from app.services.conversation_state import mark_as_pending_capture
 from app.guards.debounce import debounce_message
 from app.integrations import supabase_client as sb
 from app.integrations.chatwoot import chatwoot_client
@@ -261,19 +262,19 @@ async def chatwoot_webhook(request: Request):
             account_id, conversation_id, contact_phone, contact_name, channel, channel_type,
         )
 
-        # === NOVO: Detecção de Meta Lead Ad ===
-        is_facebook = channel_type == "Channel::FacebookPage"
-        sender_is_generic = is_likely_meta_lead_ad(content, contact_name)
+        # === Detecção de Site Widget pre-chat form ===
+        is_site_widget = channel_type == "Channel::WebWidget"
+        sender_is_generic = is_likely_form_first_message(content, contact_name)
 
-        if is_facebook and sender_is_generic:
-            log.info("[META_LEAD_AD] Conv %s — sender genérico detectado, tentando parse", conversation_id)
+        if is_site_widget and sender_is_generic:
+            log.info("[WIDGET_FORM] Conv %s — sender genérico detectado, tentando parse", conversation_id)
 
             try:
-                lead_data = parse_meta_lead_ad(content)
+                lead_data = parse_widget_form_data(content)
 
                 if lead_data:
                     log.info(
-                        "[META_LEAD_AD] Conv %s — parseado: name='%s' phone='%s'",
+                        "[WIDGET_FORM] Conv %s — parseado: name='%s' phone='%s'",
                         conversation_id, lead_data["name"], lead_data["phone"]
                     )
 
@@ -291,14 +292,27 @@ async def chatwoot_webhook(request: Request):
                             email=lead_data["email"],
                             custom_attributes={
                                 "city": lead_data["city"],
-                                "lead_source": "meta_lead_ad",
+                                "lead_source": "site_widget_form",
                                 **lead_data["custom_attributes"]
                             }
                         )
                 else:
-                    log.info("[META_LEAD_AD] Conv %s — content NÃO bateu padrão Lead Ad, segue fluxo normal", conversation_id)
+                    log.info("[WIDGET_FORM] Conv %s — content NÃO bateu padrão widget form, segue fluxo normal", conversation_id)
             except Exception as exc:
-                log.error("[META_LEAD_AD:ERROR] Conv %s — %s, segue fluxo normal", conversation_id, exc)
+                log.error("[WIDGET_FORM:ERROR] Conv %s — %s, segue fluxo normal", conversation_id, exc)
+
+        # Se sender ainda é genérico após tentativa de parse, marcar como pending_capture
+        if sender_is_generic and contact_name.strip().lower() in {"john doe", "lead", "facebook lead", ""}:
+            try:
+                await mark_as_pending_capture(
+                    org_id=org_id,
+                    contact_phone=contact_phone,
+                    chatwoot_contact_id=chatwoot_contact_id,
+                    contact_name=contact_name
+                )
+                log.info("[NAME_RESOLUTION] Marked as pending_capture: conv=%s", conversation_id)
+            except Exception as exc:
+                log.warning("[NAME_RESOLUTION] Failed to mark pending_capture: %s", exc)
 
         # === FIM bloco novo — pipeline continua normal abaixo ===
 

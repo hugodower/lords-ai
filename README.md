@@ -53,3 +53,39 @@ pytest -v
 | POST | /api/v1/agents/resume | Resume agents |
 | GET | /api/v1/logs | Conversation logs |
 | GET | /api/v1/metrics | Aggregated metrics |
+
+## Configuration
+
+### Environment Variables
+
+Key configuration options in `.env`:
+
+```bash
+# Organization
+ORG_ID=cc000000-0000-0000-0000-000000000001
+
+# Supabase (CRM)
+SUPABASE_URL=https://yourproject.supabase.co
+SUPABASE_SERVICE_KEY=eyJ...
+
+# Claude API
+CLAUDE_API_KEY=sk-ant-xxxxx
+
+# Chatwoot
+CHATWOOT_URL=https://chatwoot.yourcompany.com
+CHATWOOT_API_TOKEN=xxxxx
+CHATWOOT_ACCOUNT_ID=1
+
+# Follow-up Worker (disable automatic follow-ups)
+FOLLOWUP_WORKER_ENABLED=true  # Set to false in production to disable
+```
+
+### Follow-up Worker
+
+The follow-up worker sends automatic messages (24h, 48h, 7d) when leads don't respond.
+
+- **Default**: Enabled (`FOLLOWUP_WORKER_ENABLED=true`)
+- **Production**: Often disabled (`FOLLOWUP_WORKER_ENABLED=false`) for strategic follow-up design
+- **Development**: Keep enabled for testing
+
+When disabled, the worker runs in idle mode without processing or sending follow-ups.

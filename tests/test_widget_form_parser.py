@@ -1,14 +1,14 @@
-"""Testes para o parser de Meta Lead Ads."""
+"""Testes para o parser de pre-chat forms do Site Widget."""
 import pytest
 
-from app.utils.meta_lead_parser import (
-    parse_meta_lead_ad,
-    is_likely_meta_lead_ad,
+from app.utils.widget_form_parser import (
+    parse_widget_form_data,
+    is_likely_form_first_message,
 )
 
 
-class TestParseMetaLeadAd:
-    """Testes para a função parse_meta_lead_ad."""
+class TestParseWidgetFormData:
+    """Testes para a função parse_widget_form_data."""
 
     def test_parse_real_jose_vieira_payload(self):
         """Cenário real do lead Jose Vieira (caso original que motivou correção)."""
@@ -21,7 +21,7 @@ Hoje, o que mais tem te incomodado no desempenho do gado?: Custo alto na aliment
 Você já utiliza algum tipo de protocolo ou suplemento hoje?: Sim, já utilizo regularmente
 Hoje, qual o tamanho aproximado do seu rebanho?: Até 100 cabeças"""
 
-        result = parse_meta_lead_ad(content)
+        result = parse_widget_form_data(content)
 
         assert result is not None
         assert result["name"] == "Jose Vieira dos Santos"
@@ -38,7 +38,7 @@ Hoje, qual o tamanho aproximado do seu rebanho?: Até 100 cabeças"""
         content = """Full name: Maria Silva
 Phone number: (11) 99999-8888"""
 
-        result = parse_meta_lead_ad(content)
+        result = parse_widget_form_data(content)
 
         assert result is not None
         assert result["name"] == "Maria Silva"
@@ -50,39 +50,39 @@ Phone number: (11) 99999-8888"""
 Phone number: (21) 98888-7777
 Email: pedro@email.com"""
 
-        result = parse_meta_lead_ad(content)
+        result = parse_widget_form_data(content)
 
         assert result is not None
         assert result["email"] == "pedro@email.com"
 
     def test_returns_none_for_empty_content(self):
         """Conteúdo vazio retorna None."""
-        assert parse_meta_lead_ad("") is None
-        assert parse_meta_lead_ad(None) is None  # type: ignore
+        assert parse_widget_form_data("") is None
+        assert parse_widget_form_data(None) is None  # type: ignore
 
     def test_returns_none_for_normal_message(self):
-        """Mensagem normal de chat NÃO é detectada como Lead Ad."""
+        """Mensagem normal de chat NÃO é detectada como widget form."""
         content = "Olá, quero saber sobre o protocolo de gado de corte"
-        assert parse_meta_lead_ad(content) is None
+        assert parse_widget_form_data(content) is None
 
     def test_returns_none_without_full_name(self):
         """Sem 'Full name:' retorna None."""
         content = """Phone number: (11) 99999-9999
 City: São Paulo"""
-        assert parse_meta_lead_ad(content) is None
+        assert parse_widget_form_data(content) is None
 
     def test_returns_none_without_name_value(self):
         """'Full name:' presente mas vazio retorna None."""
         content = """Full name:
 Phone number: (11) 99999-9999"""
-        assert parse_meta_lead_ad(content) is None
+        assert parse_widget_form_data(content) is None
 
     def test_handles_extra_whitespace(self):
         """Espaços extras são tratados corretamente."""
         content = """  Full name:   João Silva
   Phone number:   (11) 98765-4321  """
 
-        result = parse_meta_lead_ad(content)
+        result = parse_widget_form_data(content)
 
         assert result is not None
         assert result["name"] == "João Silva"
@@ -93,36 +93,36 @@ Phone number: (11) 99999-9999"""
         content = """FULL NAME: Ana Costa
 PHONE NUMBER: (31) 91234-5678"""
 
-        result = parse_meta_lead_ad(content)
+        result = parse_widget_form_data(content)
 
         assert result is not None
         assert result["name"] == "Ana Costa"
 
 
-class TestIsLikelyMetaLeadAd:
-    """Testes para is_likely_meta_lead_ad."""
+class TestIsLikelyFormFirstMessage:
+    """Testes para is_likely_form_first_message."""
 
-    def test_detects_lead_with_john_doe_sender(self):
-        """Sender 'John Doe' + content com markers = é Lead Ad."""
+    def test_detects_widget_form_with_john_doe_sender(self):
+        """Sender 'John Doe' + content com markers = é widget form."""
         content = """Full name: Jose Vieira
 Phone number: (38) 9996-7762"""
 
-        assert is_likely_meta_lead_ad(content, "John Doe") is True
+        assert is_likely_form_first_message(content, "John Doe") is True
 
-    def test_detects_lead_with_empty_sender(self):
-        """Sender vazio + content com markers = é Lead Ad."""
+    def test_detects_widget_form_with_empty_sender(self):
+        """Sender vazio + content com markers = é widget form."""
         content = """Full name: Jose Vieira
 Phone number: (38) 9996-7762"""
 
-        assert is_likely_meta_lead_ad(content, "") is True
+        assert is_likely_form_first_message(content, "") is True
 
     def test_rejects_normal_user_with_real_name(self):
-        """Sender com nome real NÃO é Lead Ad."""
+        """Sender com nome real NÃO é widget form."""
         content = """Full name: Jose Vieira
 Phone number: (38) 9996-7762"""
 
-        assert is_likely_meta_lead_ad(content, "Jose Vieira dos Santos") is False
+        assert is_likely_form_first_message(content, "Jose Vieira dos Santos") is False
 
     def test_rejects_message_without_markers(self):
-        """Mensagem normal mesmo com sender 'John Doe' NÃO é Lead Ad."""
-        assert is_likely_meta_lead_ad("Olá, boa tarde!", "John Doe") is False
+        """Mensagem normal mesmo com sender 'John Doe' NÃO é widget form."""
+        assert is_likely_form_first_message("Olá, boa tarde!", "John Doe") is False
