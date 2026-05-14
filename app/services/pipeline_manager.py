@@ -331,18 +331,33 @@ async def swap_chatwoot_label(
             if removed:
                 log.info("[PIPELINE:SWAP:REMOVING] conv=%s removing=%s", conversation_id, removed)
 
-            # PATCH new labels
-            resp2 = await client.patch(conv_url, json={"labels": new_labels}, headers=headers)
+            # POST to dedicated labels endpoint (idempotent)
+            labels_url = f"{conv_url}/labels"
+            resp2 = await client.post(labels_url, json={"labels": new_labels}, headers=headers)
             log.info(
-                "[PIPELINE:SWAP:PATCH] conv=%s new_labels=%s status=%s",
-                conversation_id, new_labels, resp2.status_code,
+                "[PIPELINE:SWAP:POST] conv=%s new_labels=%s status=%s url=%s",
+                conversation_id, new_labels, resp2.status_code, labels_url,
             )
             if resp2.status_code != 200:
-                log.error("[PIPELINE:SWAP:FAIL] PATCH failed: %s", resp2.text[:300])
+                log.error("[PIPELINE:SWAP:FAIL] POST failed: %s", resp2.text[:300])
                 return False
             resp2.raise_for_status()
 
-        log.info("[PIPELINE:SWAP:OK] conv=%s label='%s' applied successfully", conversation_id, new_label)
+            # Validate response: check if labels were actually applied
+            response_data = resp2.json()
+            if not response_data:
+                actual_labels = []
+            else:
+                # Chatwoot returns labels under "payload" key (verified via curl GET)
+                actual_labels = response_data.get("payload", response_data.get("labels", []))
+            if set(actual_labels) != set(new_labels):
+                log.error(
+                    "[PIPELINE:SWAP:MISMATCH] conv=%s expected=%s actual=%s",
+                    conversation_id, new_labels, actual_labels
+                )
+                return False
+
+        log.info("[PIPELINE:SWAP:OK] conv=%s label='%s' applied and validated successfully", conversation_id, new_label)
         return True
     except Exception as exc:
         log.error("[PIPELINE:SWAP:ERROR] conv=%s label='%s' error=%s", conversation_id, new_label, exc)
