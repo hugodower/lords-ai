@@ -130,32 +130,66 @@ def validate_response(
     price_pattern = r"R\$\s*[\d.,]+"
     mentioned_prices = re.findall(price_pattern, text)
     if mentioned_prices and products:
-        real_prices = set()
+        catalog_prices = []
         for p in products:
             price = p.get("unit_price")
             if price is not None:
-                # Normalize price to string format for comparison
-                real_prices.add(f"{float(price):.2f}")
-                real_prices.add(str(int(float(price))))
+                catalog_prices.append(float(price))
 
-        for mentioned in mentioned_prices:
-            # Extract numeric value
-            value = re.sub(r"[R$\s.]", "", mentioned).replace(",", ".")
-            try:
-                val = float(value)
-                val_str = f"{val:.2f}"
-                val_int = str(int(val))
-                if val_str not in real_prices and val_int not in real_prices:
+        if catalog_prices:
+            min_catalog_price = min(catalog_prices)
+            max_catalog_price = max(catalog_prices)
+
+            for mentioned in mentioned_prices:
+                # Extract numeric value
+                value = re.sub(r"[R$\s.]", "", mentioned).replace(",", ".")
+                try:
+                    val = float(value)
+
+                    # Allow exact matches first
+                    exact_match = any(
+                        abs(val - catalog_price) < 0.01 for catalog_price in catalog_prices
+                    )
+                    if exact_match:
+                        continue
+
+                    # Allow legitimate discounts: within 15% below any catalog price
+                    discount_match = any(
+                        catalog_price * 0.85 <= val <= catalog_price
+                        for catalog_price in catalog_prices
+                    )
+                    if discount_match:
+                        continue
+
+                    # Allow derived small values (per-day, per-month costs)
+                    # If mentioned price is less than 1/4 of smallest catalog price
+                    if val < min_catalog_price * 0.25:
+                        continue
+
+                    # Block prices clearly above catalog max (hallucination/inflation)
+                    if val > max_catalog_price:
+                        log.warning(
+                            "[VALIDATOR] blocked_price: R$ %.2f above catalog max R$ %.2f",
+                            val, max_catalog_price
+                        )
+                        return ValidationResult(
+                            False,
+                            f"Preço mencionado ({mentioned}) acima do catálogo",
+                            "blocked_price",
+                        )
+
+                    # Block other invalid prices (between min_catalog/4 and min_catalog*0.85)
                     log.warning(
-                        "[VALIDATOR] Price %s not in product catalog", mentioned
+                        "[VALIDATOR] blocked_price: R$ %.2f not in valid range", val
                     )
                     return ValidationResult(
                         False,
                         f"Preço mencionado ({mentioned}) não encontrado no catálogo",
                         "blocked_price",
                     )
-            except ValueError:
-                pass
+
+                except ValueError:
+                    pass
 
     # 4. Forbidden promises
     for word in PROMISE_WORDS:

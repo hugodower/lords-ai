@@ -59,6 +59,7 @@ async def perform_handoff(
     reason: str,
     lead_temperature: str = "warm",
     extra_info: str | None = None,
+    customer_message: str | None = None,
 ) -> bool:
     """Transfer conversation to human agent with summary.
 
@@ -79,6 +80,19 @@ async def perform_handoff(
     )
 
     try:
+        # Determine customer message based on handoff reason
+        if customer_message is None:
+            if "Resposta da IA bloqueada" in reason:
+                # Validation-blocked handoff: neutral, reassuring message
+                customer_message = "Deixa eu confirmar uns detalhes aqui e já te respondo, tá?"
+            else:
+                # Intentional handoff: connect to specialist
+                customer_message = "Vou te conectar com o Luan, nosso especialista — ele te retorna em breve."
+
+        # Send customer-facing message FIRST
+        await chatwoot_client.send_message(conversation_id, customer_message, org_id=org_id)
+        log.info("[HANDOFF] Customer message sent: %s", customer_message)
+
         # Send private note with summary
         await chatwoot_client.send_private_note(conversation_id, summary, org_id=org_id)
 
