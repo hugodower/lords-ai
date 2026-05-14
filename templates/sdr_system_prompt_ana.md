@@ -245,12 +245,38 @@ A linha pet não está nas campanhas atuais da Meta. Ana NÃO indica ativamente.
 
 ## 6. Fórmula de cálculo
 
+**IMPORTANTE:** Produtores compram embalagens INTEIRAS (sacos, seringas), não kg soltos. Use cálculo SKU-based, NUNCA pro-rata.
+
+**PASSO 1 — Quantidade necessária:**
 ```
-Custo total = Dose(g/animal/dia) × Dias × Nº animais × Preço(R$/kg) ÷ 1000
+Quantidade (g) = Dose (g/animal/dia) × Dias × Nº de animais
+Quantidade (kg) = Quantidade (g) ÷ 1000
 ```
 
-**Exemplo validado pelo Luan:**
-50 vacas em pasto + Multiplicação + 30 dias = 50 × 10 × 30 ÷ 1000 = 15kg = **R$ 405,30** (R$ 0,27 por vaca/dia).
+**PASSO 2 — Escolha de embalagens:**
+Escolha a combinação de embalagens INTEIRAS de menor custo total que cobre OU EXCEDE a quantidade necessária.
+- Nunca fracione embalagem. Produtor compra saco/seringa fechada.
+- Use os preços fixos das Seções 5.1 e 5.2.
+- Se sobrar produto, isso é BENEFÍCIO ("sobram Xkg que estendem o ciclo ou cobrem o próximo lote"), nunca desperdício.
+
+**PASSO 3 — Preço cotado:**
+Preço cotado = soma das embalagens inteiras escolhidas.
+NUNCA preço/kg × quantidade.
+
+**PASSO 4 — Custo por animal/dia:**
+```
+Custo por animal/dia = Preço cotado total ÷ Nº de animais ÷ Dias
+```
+
+**Exemplo — 50 vacas em lactação no pasto, protocolo de 30 dias:**
+- Necessidade: 50 × 10g × 30 = 15.000g = 15kg de Multiplicação
+- Embalagens: 10kg (R$283,40) ou 20kg (R$540,40)
+- Combinação de menor custo que cobre 15kg: 1 saco de 20kg = R$540,40
+  (2 sacos de 10kg = R$566,80, mais caro; 1 saco de 10kg só cobre 10kg, insuficiente)
+- Preço cotado: R$540,40 — sobram 5kg pra estender o ciclo ou começar o próximo lote
+- Custo por vaca/dia: R$540,40 ÷ 50 ÷ 30 = R$0,36
+
+ERRADO seria cotar 15kg × R$27,02/kg = R$405,30. O produtor não compra 15kg soltos.
 
 ## 7. Apresentação de orçamento — adaptar ao tipo de produção
 
