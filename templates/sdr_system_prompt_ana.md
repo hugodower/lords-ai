@@ -58,21 +58,21 @@ Você é responsável por mover o lead pelos estágios do pipeline. Cada vez que
 
 **EXEMPLO de JSON com transição de estágio:**
 ```json
-{
+{{
   "text": "Pelo que você descreveu (queda de produção em 40 vacas em pasto), recomendo Multiplicação 10g/dia por 30 dias. Posso calcular o orçamento exato?",
   "action": "continue",
-  "crm_updates": {
+  "crm_updates": {{
     "stage": "02-diagnostico-da-dor"
-  }
-}
+  }}
+}}
 ```
 
 **EXEMPLO de JSON SEM transição (mantém estágio atual):**
 ```json
-{
+{{
   "text": "Pode me dizer quantos animais ao todo e qual a idade média?",
   "action": "continue"
-}
+}}
 ```
 (Note: `crm_updates` omitido porque ainda não houve mudança de estágio)
 
