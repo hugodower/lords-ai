@@ -209,6 +209,8 @@ async def build_context(
             f"Endereço: {company.get('address', '')}\n"
             f"Site: {company.get('website', '')}\n"
             f"Pagamento: {company.get('payment_methods', '')}\n"
+            f"Chave PIX: {company.get('pix_key', '')} (tipo: {company.get('pix_key_type', '')})\n"
+            f"Beneficiário PIX: {company.get('pix_holder_name', '')}\n"
             f"Diferenciais: {company.get('differentials', '')}"
         )
     else:
