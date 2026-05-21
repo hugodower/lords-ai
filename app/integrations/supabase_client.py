@@ -1314,3 +1314,101 @@ async def find_contact_by_chatwoot_contact_id(
     except Exception as exc:
         log.error("[ASSIGNMENT] FAILED to find contact by cw_id=%s: %s", chatwoot_contact_id, exc)
         return None
+
+
+async def create_activity(
+    org_id: str,
+    type: str,
+    due_at: "datetime",  # forward-reference; import local abaixo
+    title: Optional[str] = None,
+    description: str = "",
+    deal_id: Optional[str] = None,
+    contact_id: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    check_duplicates: bool = True,
+) -> Optional[dict]:
+    """
+    Cria atividade no LORDS CRM (tabela activities).
+
+    Args:
+        org_id: UUID da org (obrigatório)
+        type: tipo da atividade ('call', 'task', 'whatsapp', 'custom')
+        due_at: datetime timezone-aware da atividade (será convertido pra UTC)
+        title: título curto (ex: "Ligação agendada")
+        description: descrição opcional
+        deal_id: UUID do deal vinculado (opcional)
+        contact_id: UUID do contato vinculado (opcional)
+        assigned_to: UUID do user responsável (opcional)
+        check_duplicates: se True, verifica se já existe atividade futura similar
+
+    Returns:
+        dict da atividade criada (ou existente se duplicada), None se falhou
+    """
+    # Import local seguindo padrão do arquivo
+    from datetime import datetime, timezone as dt_timezone
+
+    # Validação: timezone-aware obrigatório
+    if due_at.tzinfo is None:
+        log.error(f"[PIPELINE:ACTIVITY] FAILED - due_at must be timezone-aware (got naive datetime: {due_at})")
+        return None
+
+    # Converte pra UTC pra salvar
+    due_at_utc = due_at.astimezone(dt_timezone.utc)
+
+    # Dup check: procura atividade futura igual (não completada)
+    if check_duplicates and (deal_id or contact_id):
+        try:
+            sb = get_supabase()
+            now_utc = datetime.now(dt_timezone.utc).isoformat()
+
+            query = sb.table("activities").select("id, due_at, title").eq(
+                "organization_id", org_id
+            ).eq("type", type).eq("completed", False).gte("due_at", now_utc)
+
+            if deal_id:
+                query = query.eq("deal_id", deal_id)
+            if contact_id:
+                query = query.eq("contact_id", contact_id)
+
+            existing = query.execute()
+
+            if existing.data and len(existing.data) > 0:
+                dup = existing.data[0]
+                log.warning(
+                    f"[PIPELINE:ACTIVITY:DUP] returning existing instead of creating new — "
+                    f"existing_id={dup['id']} due_at={dup.get('due_at')} title={dup.get('title')}"
+                )
+                return dup
+        except Exception as exc:
+            log.warning(f"[PIPELINE:ACTIVITY:DUP] dup check failed: {exc}. Proceeding with creation.")
+
+    # Cria a atividade
+    try:
+        sb = get_supabase()
+        payload = {
+            "organization_id": org_id,
+            "type": type,
+            "title": title,
+            "description": description or "",
+            "due_at": due_at_utc.isoformat(),
+            "deal_id": deal_id,
+            "contact_id": contact_id,
+            "assigned_to": assigned_to,
+        }
+
+        resp = sb.table("activities").insert(payload).execute()
+
+        if resp and resp.data:
+            created = resp.data[0]
+            log.info(
+                f"[PIPELINE:ACTIVITY:CREATE] criado — id={created['id']} type={type} "
+                f"due_at={due_at_utc.isoformat()} deal_id={deal_id} contact_id={contact_id} "
+                f"assigned_to={assigned_to}"
+            )
+            return created
+
+        log.error(f"[PIPELINE:ACTIVITY] FAILED - insert returned no data: {resp}")
+        return None
+    except Exception as exc:
+        log.error(f"[PIPELINE:ACTIVITY] FAILED to create activity: {exc}", exc_info=True)
+        return None

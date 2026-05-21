@@ -668,6 +668,63 @@ class BaseAgent(ABC):
                 log.info("[PIPELINE:TRIGGER] → calling update_stage('03-reuniao-agendada') for conv %s", conversation_id)
                 await update_stage(org_id, contact_phone, conversation_id, "03-reuniao-agendada", contact_name, chatwoot_contact_id, channel=channel)
                 schedule_resolve(org_id, conversation_id, 30, "03-reuniao-agendada")
+
+                # ─── NOVO: Criar atividade no CRM + handoff pro vendedor humano ───
+                try:
+                    from app.services.pipeline_manager import ensure_contact_exists, ensure_deal_exists
+
+                    # 1. Lookup contact (priorizar chatwoot_contact_id)
+                    contact = await ensure_contact_exists(
+                        org_id, contact_phone, contact_name, chatwoot_contact_id, channel=channel
+                    )
+
+                    if not contact:
+                        log.warning(
+                            "[SCHEDULE:CHAIN] contact lookup failed for org=%s phone=%s — skipping activity+handoff",
+                            org_id, contact_phone
+                        )
+                    else:
+                        # 2. Garantir deal existe (ensure_deal_exists retorna tuple)
+                        deal, _is_new = await ensure_deal_exists(org_id, contact["id"], contact_name)
+
+                        # 3. Criar atividade no CRM (try/except gracioso — não bloqueia handoff)
+                        try:
+                            from datetime import datetime
+                            sched_start_iso = sched_result.get("start") if sched_result else None
+                            if sched_start_iso and deal:
+                                sched_start_dt = datetime.fromisoformat(sched_start_iso)
+                                activity = await sb.create_activity(
+                                    org_id=org_id,
+                                    type="call",
+                                    due_at=sched_start_dt,
+                                    title=f"Ligação agendada - {contact_name}",
+                                    description=f"Agendado via Ana SDR. Event ID: {sched_result.get('event_id', '')}",
+                                    deal_id=deal["id"],
+                                    contact_id=contact["id"],
+                                    assigned_to=agent_config.get("handoff_user_id"),
+                                )
+                                if activity:
+                                    log.info("[SCHEDULE:CHAIN] ✓ activity created — id=%s", activity.get("id"))
+                        except Exception as activity_err:
+                            log.error("[SCHEDULE:CHAIN] FAILED to create activity — %s", activity_err, exc_info=True)
+
+                        # 4. Handoff pro vendedor humano (Luan)
+                        try:
+                            await perform_handoff(
+                                conversation_id=conversation_id,
+                                org_id=org_id,
+                                agent_config=agent_config,
+                                contact_name=contact_name,
+                                contact_phone=contact_phone,
+                                reason=f"Ligação agendada via Ana — {sched_result.get('start', '') if sched_result else ''}",
+                                lead_temperature=output.lead_temperature,
+                                customer_message=f"Pronto! Já avisei o Luan, nosso especialista, sobre o horário agendado. Ele vai te ligar pontualmente. Qualquer coisa, me chama aqui."
+                            )
+                            log.info("[SCHEDULE:CHAIN] ✓ handoff completed for conv=%s", conversation_id)
+                        except Exception as handoff_err:
+                            log.error("[SCHEDULE:CHAIN] FAILED handoff — %s", handoff_err, exc_info=True)
+                except Exception as chain_err:
+                    log.error("[SCHEDULE:CHAIN] FAILED chain — %s", chain_err, exc_info=True)
             elif action == "handoff":
                 log.info("[PIPELINE:TRIGGER] → calling update_stage('05-em-negociacao') for conv %s", conversation_id)
                 await update_stage(org_id, contact_phone, conversation_id, "05-em-negociacao", contact_name, chatwoot_contact_id, channel=channel)

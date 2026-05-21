@@ -309,6 +309,18 @@ async def execute_scheduling(
         end = start + timedelta(minutes=duration)
         log.info("[SCHEDULE] Step 2: Parsed datetime — start=%s, end=%s, duration=%d min", start, end, duration)
 
+        # Step 2.5: Validate slot is within configured call window (weekday, business hours, not holiday)
+        from app.skills.business_hours import is_valid_call_slot
+
+        valid, motivo = await is_valid_call_slot(start, org_id=org_id)
+        if not valid:
+            log.warning("[SCHEDULE:INVALID_SLOT] org=%s dt=%s motivo=%s", org_id, start.isoformat(), motivo)
+            return {
+                "success": False,
+                "error": "invalid_slot",
+                "message": f"Infelizmente nesse horário não consigo agendar ({motivo}). Podemos combinar outro dia ou horário?"
+            }
+
         # Get company info for the event
         log.info("[SCHEDULE] Step 3: Fetching company_info ...")
         company = await sb.get_company_info(org_id)
