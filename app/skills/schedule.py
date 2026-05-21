@@ -268,12 +268,12 @@ async def execute_scheduling(
         bool(config.get("google_oauth_token")), config.get("slot_duration_minutes", 60),
     )
 
-    if config.get("scheduling_type") != "google_calendar":
+    if config.get("scheduling_type") not in ("google_calendar", "collect_preference"):
         log.error(
-            "[SCHEDULE] FAIL — scheduling_type='%s' (expected 'google_calendar') for org %s",
+            "[SCHEDULE] FAIL — scheduling_type='%s' (expected 'google_calendar' or 'collect_preference') for org %s",
             config.get("scheduling_type"), org_id,
         )
-        return {"success": False, "error": f"scheduling_type is '{config.get('scheduling_type')}', not 'google_calendar'"}
+        return {"success": False, "error": f"scheduling_type is '{config.get('scheduling_type')}', not supported"}
 
     if not requested_date or not requested_time:
         log.error("[SCHEDULE] FAIL — Date or time missing: date=%s, time=%s", requested_date, requested_time)
@@ -319,6 +319,22 @@ async def execute_scheduling(
                 "success": False,
                 "error": "invalid_slot",
                 "message": f"Infelizmente nesse horário não consigo agendar ({motivo}). Podemos combinar outro dia ou horário?"
+            }
+
+        # Step 2.6: collect_preference mode — skip Google Calendar entirely
+        # Return success here so the chain in base.py (create_activity + handoff) takes over
+        if config.get("scheduling_type") == "collect_preference":
+            end = start + timedelta(minutes=duration)
+            log.info(
+                "[SCHEDULE:COLLECT_PREF] ✓ slot validated for org=%s — start=%s end=%s",
+                org_id, start.isoformat(), end.isoformat(),
+            )
+            return {
+                "success": True,
+                "event_id": None,  # no Google Calendar event in collect_preference mode
+                "confirmation_message": f"Agendamento confirmado pra {start.strftime('%d/%m às %H:%M')}.",
+                "start": start.isoformat(),
+                "end": end.isoformat(),
             }
 
         # Get company info for the event
