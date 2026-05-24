@@ -38,7 +38,6 @@ class Settings(BaseSettings):
 
     # Config
     log_level: str = "INFO"
-    max_response_time_seconds: int = 10
 
     # Follow-up Worker
     followup_worker_enabled: bool = True  # Set to False to disable follow-up worker

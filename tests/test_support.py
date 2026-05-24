@@ -21,7 +21,7 @@ class TestSupportAgent:
             "agent_name": "Ana",
             "personality": "Prestativa e paciente.",
             "max_messages": 10,
-            "max_response_time_seconds": 10,
+            "max_response_time_seconds": 10,  # TODO: Dead code - remove in next cleanup (not consumed by backend)
             "handoff_agent_id": 42,
         }
 
@@ -63,7 +63,7 @@ class TestSupportAgent:
             "agent_name": "Ana",
             "personality": "Prestativa e paciente.",
             "max_messages": 10,
-            "max_response_time_seconds": 10,
+            "max_response_time_seconds": 10,  # TODO: Dead code - remove in next cleanup (not consumed by backend)
             "handoff_agent_id": 42,
         }
 

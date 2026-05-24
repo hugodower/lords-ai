@@ -36,7 +36,7 @@ def sample_agent_config():
         "agent_name": "Ana",
         "personality": "Profissional, simpática e objetiva.",
         "max_messages": 10,
-        "max_response_time_seconds": 10,
+        "max_response_time_seconds": 10,  # TODO: Dead code - remove in next cleanup (not consumed by backend)
         "handoff_agent_id": 42,
         "handoff_agent_name": "Carlos",
     }

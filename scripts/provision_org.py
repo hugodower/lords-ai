@@ -182,7 +182,7 @@ def provision(args) -> dict:
             "personality": args.personality or DEFAULT_PERSONALITY,
             "is_active": True,
             "max_messages": args.max_messages,
-            "max_response_time_seconds": 10,
+            "max_response_time_seconds": 10,  # TODO: Dead code - remove in next cleanup (not consumed by backend)
             "handoff_agent_id": None,
             "handoff_agent_name": None,
             "claude_api_key": None,

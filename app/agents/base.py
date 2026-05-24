@@ -388,9 +388,6 @@ class BaseAgent(ABC):
         ]
 
         # ── Layer 4: Claude API ──────────────────────────────────────
-        max_time = agent_config.get(
-            "max_response_time_seconds", settings.max_response_time_seconds
-        )
         try:
             raw_response, tokens_used = await generate_response(
                 system_prompt=system_prompt,
