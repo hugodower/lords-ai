@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, File, Query, Request, UploadFile
+from fastapi import FastAPI, File, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.config import settings
@@ -93,19 +93,41 @@ app = FastAPI(
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health():
-    agents_active = []
+async def health(response: Response):
+    """
+    Health check raso. Usado pelo Docker HEALTHCHECK.
+
+    Retorna HTTP 503 se Supabase falhar (dependência crítica).
+    Retorna HTTP 200 com status='degraded' se Redis ou Chroma falharem
+    (importantes mas não bloqueantes — o agente ainda processa).
+    Retorna HTTP 200 com status='ok' se tudo OK.
+    """
+    supabase_ok = False
+    agents_active: list[str] = []
+
     try:
         active = await sb.get_active_agents(settings.org_id)
         agents_active = [a["agent_type"] for a in active]
-    except Exception:
-        pass
+        supabase_ok = True
+    except Exception as e:
+        log.error("[HEALTH] Supabase check failed: %s", e)
+        supabase_ok = False
 
     redis_ok = await ping_redis()
     chroma_ok = ping_chroma()
 
+    # Supabase é crítico: sem ele não há agent_configs, agente não funciona
+    if not supabase_ok:
+        response.status_code = 503
+        status = "unhealthy"
+    elif not redis_ok or not chroma_ok:
+        # Degradado: funciona com perda de qualidade (cache/RAG offline)
+        status = "degraded"
+    else:
+        status = "ok"
+
     return HealthResponse(
-        status="ok",
+        status=status,
         org_id=settings.org_id,
         agents_active=agents_active,
         redis="connected" if redis_ok else "disconnected",
