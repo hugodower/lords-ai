@@ -177,29 +177,11 @@ class BaseAgent(ABC):
         # ── Layer 2: Intent classification ───────────────────────────
         intent, handoff_note = await classify_message_intent(message)
         if handoff_note:
-            await perform_handoff(
-                conversation_id=conversation_id,
-                org_id=org_id,
-                agent_config=agent_config,
-                contact_name=contact_name,
-                contact_phone=contact_phone,
-                reason=handoff_note,
-            )
-            await log_interaction(
-                org_id=org_id,
-                conversation_id=conversation_id,
-                contact_phone=contact_phone,
-                contact_name=contact_name,
-                agent_type=agent_type,
-                message_role="user",
-                message_text=message,
-                action_taken="handoff",
-                skill_used="handoff",
-            )
-            return ProcessMessageResponse(
-                action="handoff",
-                skill_used="handoff",
-                agent_type=agent_type,
+            # INTENT-based auto-handoff REMOVED
+            # Decision: Ana NEVER auto-assigns. Just log intent for debug.
+            log.info(
+                "[INTENT] classify_intent suggested handoff but ignoring (Ana decides): %s",
+                handoff_note
             )
 
         # Cancel pending follow-ups (lead responded)
@@ -417,19 +399,22 @@ class BaseAgent(ABC):
         cost = tokens_used * COST_PER_TOKEN if tokens_used else None
 
         if not validation.passed:
+            # VALIDATION-blocked auto-handoff REMOVED
+            # Decision: Ana NEVER auto-assigns to Luan. Even when validator blocks,
+            # Ana should send friendly fallback and stay in standby.
+            # Luan assumes manually in Chatwoot if needed.
             log.warning(
-                "[VALIDATOR] Blocked response: %s — %s",
+                "[VALIDATOR] Blocked response: %s — %s (NO auto-handoff)",
                 validation.check_name, validation.reason,
             )
-            # Handoff due to validation failure
-            await perform_handoff(
-                conversation_id=conversation_id,
-                org_id=org_id,
-                agent_config=agent_config,
-                contact_name=contact_name,
-                contact_phone=contact_phone,
-                reason=f"Resposta da IA bloqueada: {validation.reason}",
-            )
+
+            # Send friendly fallback message to keep customer engaged
+            fallback_msg = "Opa, deixa eu confirmar uns detalhes aqui e já te respondo, tá?"
+            try:
+                await chatwoot_client.send_message(conversation_id, fallback_msg, org_id=org_id)
+            except Exception as e:
+                log.error("[VALIDATOR] Failed to send fallback message: %s", e)
+
             await log_interaction(
                 org_id=org_id,
                 conversation_id=conversation_id,
@@ -437,16 +422,16 @@ class BaseAgent(ABC):
                 contact_name=contact_name,
                 agent_type=agent_type,
                 message_role="assistant",
-                message_text=output.text,
+                message_text=fallback_msg,
                 skill_used=output.skill_used,
-                action_taken="blocked",
+                action_taken="blocked_fallback",
                 validation_result=validation.check_name,
                 tokens_used=tokens_used,
                 cost_usd=cost,
                 response_time_ms=elapsed_ms,
             )
             return ProcessMessageResponse(
-                action="blocked",
+                action="blocked_fallback",
                 skill_used=output.skill_used,
                 agent_type=agent_type,
             )
