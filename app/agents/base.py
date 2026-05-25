@@ -417,9 +417,31 @@ class BaseAgent(ABC):
                 output = AgentOutput.model_validate_json(json_substr)
                 log.info("[CLAUDE_PARSED] conv=%s (extracted) action=%s schedule=%s", conversation_id, output.action, output.schedule is not None)
             except Exception as parse_err:
-                # Use raw text as response
-                log.warning("[CLAUDE_PARSED] conv=%s JSON parse failed (%s), using raw text", conversation_id, parse_err)
-                output = AgentOutput(text=raw_response, action="continue", skill_used="general")
+                # Last resort: try to extract "text" field via regex from malformed JSON
+                import re
+                text_match = re.search(r'"text"\s*:\s*"((?:[^"\\]|\\.)*)"', raw_response)
+                if text_match:
+                    extracted_text = text_match.group(1).replace('\\n', '\n').replace('\\"', '"')
+                    log.warning(
+                        "[CLAUDE_PARSED] conv=%s extracted text via regex from malformed JSON (parse_err=%s)",
+                        conversation_id, parse_err
+                    )
+                    output = AgentOutput(text=extracted_text, action="continue", skill_used="general")
+                else:
+                    # JSON unparseable AND no text field found — send generic error
+                    log.error(
+                        "[CLAUDE_PARSED_FAILED] conv=%s JSON parse failed (%s)",
+                        conversation_id, parse_err
+                    )
+                    log.error(
+                        "[CLAUDE_RAW_OUTPUT] conv=%s raw=%r",
+                        conversation_id, raw_response[:500]
+                    )
+                    output = AgentOutput(
+                        text="Opa, tive um probleminha técnico aqui. Pode mandar a mensagem de novo?",
+                        action="continue",
+                        skill_used="general"
+                    )
 
         # ── Layer 5: Response validation ─────────────────────────────
         products = await sb.get_products(org_id)
