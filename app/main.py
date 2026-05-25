@@ -204,6 +204,8 @@ async def chatwoot_webhook(request: Request):
     if payload.get("private") is True:
         return JSONResponse({"status": "ignored", "reason": "private_note"})
 
+    # Extract conversation early (needed by multiple guards and extractors)
+    conversation = payload.get("conversation") or {}
 
     # Guard: skip if message is from the bot/AI itself (avoid loop)
     sender = payload.get("sender") or {}
@@ -387,7 +389,6 @@ async def chatwoot_webhook(request: Request):
         # Ana auto-assigns to herself after each response (chatwoot.py:94-126),
         # so we must distinguish Ana from real humans by checking agent_id
         # against the AI agent's ID from agent_configs.
-        conversation = payload.get("conversation") or {}
         assignee = (
             conversation.get("assignee")
             or conversation.get("meta", {}).get("assignee")
