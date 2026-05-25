@@ -204,25 +204,6 @@ async def chatwoot_webhook(request: Request):
     if payload.get("private") is True:
         return JSONResponse({"status": "ignored", "reason": "private_note"})
 
-    # Guard: skip if conversation has a human agent assigned
-    # Chatwoot webhook payload varies — assignee can be in:
-    #   1. conversation.assignee (some events)
-    #   2. conversation.meta.assignee (most common, conversation_updated)
-    # Check BOTH locations to ensure we don't miss manual assignments.
-    conversation = payload.get("conversation") or {}
-    assignee = (
-        conversation.get("assignee")
-        or conversation.get("meta", {}).get("assignee")
-    )
-    if assignee and assignee.get("id"):
-        agent_name = assignee.get("name") or assignee.get("email") or assignee.get("id")
-        agent_id = assignee.get("id")
-        conv_id = conversation.get("id", "?")
-        log.info(
-            "[WEBHOOK] Conversa %s tem agente humano atribuído (id=%s, name=%s), ignorando",
-            conv_id, agent_id, agent_name,
-        )
-        return JSONResponse({"status": "ignored", "reason": "human_assigned"})
 
     # Guard: skip if message is from the bot/AI itself (avoid loop)
     sender = payload.get("sender") or {}
@@ -398,6 +379,59 @@ async def chatwoot_webhook(request: Request):
                     )
         except Exception as camp_err:
             log.warning("[CAMPAIGN] Error extracting campaign context: %s", camp_err)
+
+        # Guard: skip if conversation is assigned to a HUMAN agent (not Ana herself).
+        # Chatwoot webhook payload varies — assignee can be in:
+        #   1. conversation.assignee (some events)
+        #   2. conversation.meta.assignee (most common, conversation_updated)
+        # Ana auto-assigns to herself after each response (chatwoot.py:94-126),
+        # so we must distinguish Ana from real humans by checking agent_id
+        # against the AI agent's ID from agent_configs.
+        conversation = payload.get("conversation") or {}
+        assignee = (
+            conversation.get("assignee")
+            or conversation.get("meta", {}).get("assignee")
+        )
+        if assignee and assignee.get("id"):
+            assignee_id = assignee.get("id")
+            assignee_name = assignee.get("name") or assignee.get("email") or assignee_id
+            assignee_email = (assignee.get("email") or "").lower()
+            conv_id = conversation.get("id", "?")
+
+            # Check if assignee is the AI agent (Ana) — get from agent_configs
+            try:
+                from app.integrations.chatwoot import chatwoot_client
+                ai_agent_email = await chatwoot_client._get_ai_agent_email(org_id)
+                ai_agent_id = await chatwoot_client._get_ai_agent_id(
+                    base_url=settings.chatwoot_base_url,
+                    account_id=account_id,
+                    headers={"api_access_token": settings.chatwoot_access_token},
+                    agent_email=ai_agent_email,
+                )
+            except Exception as exc:
+                log.warning(
+                    "[WEBHOOK] Failed to fetch AI agent ID for org=%s: %s — treating assignee as human",
+                    org_id, exc
+                )
+                ai_agent_id = None
+
+            is_ai_agent = (
+                (ai_agent_id is not None and assignee_id == ai_agent_id)
+                or (ai_agent_email and assignee_email == ai_agent_email.lower())
+            )
+
+            if is_ai_agent:
+                log.info(
+                    "[WEBHOOK] Conversa %s atribuída à Ana (id=%s, email=%s), continuando processamento",
+                    conv_id, assignee_id, assignee_email
+                )
+                # Continue processing — assignee is the AI agent itself, not a human
+            else:
+                log.info(
+                    "[WEBHOOK] Conversa %s tem agente humano atribuído (id=%s, name=%s), ignorando",
+                    conv_id, assignee_id, assignee_name,
+                )
+                return JSONResponse({"status": "ignored", "reason": "human_assigned"})
 
         # Determine agent and process
         log.info("[WEBHOOK] Buscando agentes ativos para org=%s...", org_id)
