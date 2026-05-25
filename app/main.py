@@ -205,14 +205,22 @@ async def chatwoot_webhook(request: Request):
         return JSONResponse({"status": "ignored", "reason": "private_note"})
 
     # Guard: skip if conversation has a human agent assigned
+    # Chatwoot webhook payload varies — assignee can be in:
+    #   1. conversation.assignee (some events)
+    #   2. conversation.meta.assignee (most common, conversation_updated)
+    # Check BOTH locations to ensure we don't miss manual assignments.
     conversation = payload.get("conversation") or {}
-    assignee = conversation.get("assignee")
+    assignee = (
+        conversation.get("assignee")
+        or conversation.get("meta", {}).get("assignee")
+    )
     if assignee and assignee.get("id"):
         agent_name = assignee.get("name") or assignee.get("email") or assignee.get("id")
+        agent_id = assignee.get("id")
         conv_id = conversation.get("id", "?")
         log.info(
-            "[WEBHOOK] Conversa %s tem agente humano atribuído (%s), ignorando",
-            conv_id, agent_name,
+            "[WEBHOOK] Conversa %s tem agente humano atribuído (id=%s, name=%s), ignorando",
+            conv_id, agent_id, agent_name,
         )
         return JSONResponse({"status": "ignored", "reason": "human_assigned"})
 
