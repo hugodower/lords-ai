@@ -17,3 +17,5 @@ credentials/
 
 # Windows artifacts
 nul
+
+tmp/
