@@ -302,52 +302,17 @@ class BaseAgent(ABC):
         except Exception as camp_err:
             log.warning("[CAMPAIGN] Error loading campaign context: %s", camp_err)
 
-        # ── Auto-handoff for persistent frustration ───────────────
+        # SENTIMENT-based auto-handoff REMOVED
+        # Reason: was triggering false positives on normal price objections
+        # ("tá caro", "puxado") classifying as frustrated.
+        # Ana now decides handoff via action="handoff" in JSON output.
+        # Sentiment is still detected and passed to context for tone adjustment,
+        # but does NOT trigger automatic handoff anymore.
         if sentiment_data["sentiment"] == "frustrated":
-            history_check = await get_conversation_history(conversation_id)
-            assistant_msgs = sum(1 for m in history_check if m.get("role") == "assistant")
-            if assistant_msgs >= 2:
-                log.warning(
-                    "[SENTIMENT:ALERT] Lead frustrado após %d interações, sugerindo handoff conv=%s",
-                    assistant_msgs, conversation_id,
-                )
-                await perform_handoff(
-                    conversation_id=conversation_id,
-                    org_id=org_id,
-                    agent_config=agent_config,
-                    contact_name=contact_name,
-                    contact_phone=contact_phone,
-                    reason="Lead demonstrando frustração persistente — transferindo para atendente humano.",
-                )
-                handoff_msg = (
-                    "Entendo sua frustração e peço desculpas pelo inconveniente. "
-                    "Vou te transferir agora para um atendente que pode te ajudar melhor, tudo bem?"
-                )
-                await chatwoot_client.send_message(conversation_id, handoff_msg, org_id=org_id)
-                await add_message(conversation_id, "assistant", handoff_msg)
-                await log_interaction(
-                    org_id=org_id,
-                    conversation_id=conversation_id,
-                    contact_phone=contact_phone,
-                    contact_name=contact_name,
-                    agent_type=agent_type,
-                    message_role="assistant",
-                    message_text=handoff_msg,
-                    skill_used="sentiment",
-                    action_taken="handoff",
-                )
-                # Pipeline: move to negociacao + resolve (frustrated handoff)
-                try:
-                    await update_stage(org_id, contact_phone, conversation_id, "05-em-negociacao", contact_name, chatwoot_contact_id, channel=channel)
-                    await resolve_conversation(org_id, conversation_id, "handoff_frustrado")
-                except Exception as _pe:
-                    log.warning("[PIPELINE] Error on frustrated handoff: %s", _pe)
-                return ProcessMessageResponse(
-                    action="handoff",
-                    message_sent=handoff_msg,
-                    skill_used="sentiment",
-                    agent_type=agent_type,
-                )
+            log.info(
+                "[SENTIMENT_FRUSTRATED] conv=%s detected but NOT auto-handing off (Ana decides)",
+                conversation_id
+            )
 
         # ── Layer 3: Build context ──────────────────────────────────
         try:
@@ -487,7 +452,7 @@ class BaseAgent(ABC):
             )
 
         # ── Layer 6: Autonomy limit ─────────────────────────────────
-        max_msgs = agent_config.get("max_messages", 10)
+        max_msgs = agent_config.get("max_messages", 30)  # was 10
         autonomy = await check_autonomy_limit(conversation_id, max_msgs)
         if autonomy.should_handoff:
             await perform_handoff(
@@ -727,21 +692,14 @@ class BaseAgent(ABC):
                         except Exception as activity_err:
                             log.error("[SCHEDULE:CHAIN] FAILED to create activity — %s", activity_err, exc_info=True)
 
-                        # 4. Handoff pro vendedor humano (Luan)
-                        try:
-                            await perform_handoff(
-                                conversation_id=conversation_id,
-                                org_id=org_id,
-                                agent_config=agent_config,
-                                contact_name=contact_name,
-                                contact_phone=contact_phone,
-                                reason=f"Ligação agendada via Ana — {sched_result.get('start', '') if sched_result else ''}",
-                                lead_temperature=output.lead_temperature,
-                                customer_message=f"Pronto! Já avisei o Luan, nosso especialista, sobre o horário agendado. Ele vai te ligar pontualmente. Qualquer coisa, me chama aqui."
-                            )
-                            log.info("[SCHEDULE:CHAIN] ✓ handoff completed for conv=%s", conversation_id)
-                        except Exception as handoff_err:
-                            log.error("[SCHEDULE:CHAIN] FAILED handoff — %s", handoff_err, exc_info=True)
+                        # POST-SCHEDULE auto-handoff REMOVED
+                        # Reason: lead may have follow-up questions before the meeting.
+                        # Ana continues responding. Luan assumes conversation manually
+                        # when he replies in Chatwoot, OR when the meeting time arrives.
+                        log.info(
+                            "[SCHEDULE_SUCCESS] conv=%s scheduled, Ana continues responding (no auto-handoff)",
+                            conversation_id
+                        )
                 except Exception as chain_err:
                     log.error("[SCHEDULE:CHAIN] FAILED chain — %s", chain_err, exc_info=True)
             elif action == "handoff":
