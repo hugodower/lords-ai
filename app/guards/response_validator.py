@@ -101,15 +101,40 @@ def validate_response(
 
     Returns ValidationResult with passed=True if OK, or passed=False with reason.
     """
-    # Skip price validation if há orçamento estruturado preenchido
-    if (output.orcamento
+    # BYPASS DE VALIDAÇÃO DE PREÇO — duas condições aceitas:
+    #
+    # 1. valor_total_brl preenchido E > 0 (orçamento completo)
+    # 2. produto + n_animais preenchidos E n_animais > 0 (orçamento parcial)
+    #
+    # Razão: Ana às vezes preenche orcamento sem valor_total_brl
+    # (esquece um campo). Bypass aceita quando há intenção clara
+    # de cotação estruturada, mesmo que incompleta.
+    #
+    # Proteção mantida: se Ana mencionar R$ no text SEM nenhum
+    # campo de orcamento, validação rigorosa ainda dispara.
+
+    has_full_orcamento = (
+        output.orcamento
         and output.orcamento.valor_total_brl
-        and output.orcamento.valor_total_brl > 0):
+        and output.orcamento.valor_total_brl > 0
+    )
+
+    has_partial_orcamento = (
+        output.orcamento
+        and output.orcamento.produto
+        and output.orcamento.n_animais
+        and output.orcamento.n_animais > 0
+    )
+
+    if has_full_orcamento or has_partial_orcamento:
+        bypass_reason = "full" if has_full_orcamento else "partial (produto+n_animais)"
         log.info(
-            "[VALIDATOR] Skipping price check — "
-            f"orcamento estruturado present: R$ {output.orcamento.valor_total_brl}"
+            "[VALIDATOR] price check bypassed (%s): produto=%s n_animais=%s valor=%s",
+            bypass_reason,
+            output.orcamento.produto,
+            output.orcamento.n_animais,
+            output.orcamento.valor_total_brl
         )
-        # Still validate forbidden topics in text
         return _validate_forbidden_only(output.text, forbidden_topics)
 
     text = output.text
