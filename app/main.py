@@ -404,9 +404,9 @@ async def chatwoot_webhook(request: Request):
                 from app.integrations.chatwoot import chatwoot_client
                 ai_agent_email = await chatwoot_client._get_ai_agent_email(org_id)
                 ai_agent_id = await chatwoot_client._get_ai_agent_id(
-                    base_url=settings.chatwoot_base_url,
+                    base_url=settings.chatwoot_url,
                     account_id=account_id,
-                    headers={"api_access_token": settings.chatwoot_access_token},
+                    headers={"api_access_token": settings.chatwoot_api_token},
                     agent_email=ai_agent_email,
                 )
             except Exception as exc:
