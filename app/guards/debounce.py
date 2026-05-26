@@ -112,8 +112,14 @@ async def debounce_message(
         )
 
         try:
-            await process_fn(combined)
+            await asyncio.wait_for(process_fn(combined), timeout=90.0)
             log.info("[DEBOUNCE] process_fn completed for conv=%s", conversation_id)
+        except asyncio.TimeoutError:
+            log.error(
+                "[DEBOUNCE] process_fn TIMEOUT after 90s — conv=%s. "
+                "Releasing lock and continuing.",
+                conversation_id
+            )
         except Exception as exc:
             log.error(
                 "[DEBOUNCE] process_fn ERROR for conv %s: %s",

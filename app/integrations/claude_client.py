@@ -32,13 +32,20 @@ async def generate_response(
     Uses claude-sonnet-4-20250514 for best cost/performance ratio.
     """
     client = get_claude()
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=max_tokens,
-        temperature=temperature,
-        system=system_prompt,
-        messages=messages,
-    )
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system_prompt,
+            messages=messages,
+            timeout=60.0,
+        )
+    except anthropic.APITimeoutError as exc:
+        log.error(
+            "[CLAUDE] API timeout after 60s — re-raising for upstream handling"
+        )
+        raise
     # Extract and concatenate all text blocks, ignore tool_use/thinking/etc
     text_blocks = []
     for block in response.content:
@@ -69,12 +76,19 @@ async def generate_extraction(
     Uses claude-haiku-4-5-20251001 to minimize cost.
     """
     client = get_claude()
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=max_tokens,
-        temperature=0.0,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=max_tokens,
+            temperature=0.0,
+            messages=[{"role": "user", "content": prompt}],
+            timeout=60.0,
+        )
+    except anthropic.APITimeoutError as exc:
+        log.error(
+            "[CLAUDE] API timeout after 60s — re-raising for upstream handling"
+        )
+        raise
     # Extract and concatenate all text blocks, ignore tool_use/thinking/etc
     text_blocks = []
     for block in response.content:
@@ -113,6 +127,7 @@ async def classify_intent(message: str) -> str:
                 "Responda APENAS com a categoria, sem explicação."
             ),
             messages=[{"role": "user", "content": message}],
+            timeout=60.0,
         )
         # Extract and concatenate all text blocks, ignore tool_use/thinking/etc
         text_blocks = []
