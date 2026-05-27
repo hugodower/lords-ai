@@ -698,18 +698,35 @@ class BaseAgent(ABC):
                     )
                     await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id, channel=channel)
                 else:
-                    log.info("[PIPELINE:TRIGGER] → calling update_stage('02-qualificacao') for conv %s (temp=%s)", conversation_id, output.lead_temperature)
-                    await update_stage(org_id, contact_phone, conversation_id, "02-qualificacao", contact_name, chatwoot_contact_id, channel=channel)
+                    # Lookup dinâmico do label conforme org (ai_qualified = stage onde Ana detectou dor)
+                    ai_qualified_stage = await sb.get_stage_by_role(org_id, "ai_qualified")
+                    if ai_qualified_stage and ai_qualified_stage.get("chatwoot_label"):
+                        target_label = ai_qualified_stage["chatwoot_label"]
+                        log.info(
+                            "[PIPELINE:TRIGGER] → calling update_stage('%s') for conv %s (temp=%s)",
+                            target_label, conversation_id, output.lead_temperature
+                        )
+                        await update_stage(org_id, contact_phone, conversation_id, target_label, contact_name, chatwoot_contact_id, channel=channel)
+                    else:
+                        log.warning(
+                            "[PIPELINE:TRIGGER] No 'ai_qualified' role mapped for org=%s — skipping auto-advance, ensuring deal exists only",
+                            org_id
+                        )
+                        await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id, channel=channel)
             else:
                 log.info("[PIPELINE:TRIGGER] → calling ensure_contact_and_deal() for conv %s (temp=%s)", conversation_id, output.lead_temperature)
                 await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id, channel=channel)
 
             # CRM-driven stage move (if Claude specified a stage explicitly)
             if output.crm_updates and output.crm_updates.stage:
-                if output.crm_updates.stage == "02-qualificacao" and is_generic_greeting(message):
+                # Resolve label do ai_qualified pra essa org (pode variar entre orgs)
+                ai_qualified_stage = await sb.get_stage_by_role(org_id, "ai_qualified")
+                ai_qualified_label = ai_qualified_stage["chatwoot_label"] if (ai_qualified_stage and ai_qualified_stage.get("chatwoot_label")) else None
+
+                if output.crm_updates.stage == ai_qualified_label and is_generic_greeting(message):
                     log.warning(
-                        "[QUALIFICATION:GUARD_BLOCKED] conv=%s crm_updates.stage='02-qualificacao' blocked: generic greeting only (message=%r). Stage override ignored.",
-                        conversation_id, message[:50]
+                        "[QUALIFICATION:GUARD_BLOCKED] conv=%s crm_updates.stage='%s' blocked: generic greeting only (message=%r). Stage override ignored.",
+                        conversation_id, ai_qualified_label, message[:50]
                     )
                 else:
                     log.info("[PIPELINE:TRIGGER] → CRM override: update_stage('%s') for conv %s", output.crm_updates.stage, conversation_id)

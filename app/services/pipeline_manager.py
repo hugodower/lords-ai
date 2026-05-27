@@ -18,18 +18,11 @@ from app.utils.logger import get_logger
 log = get_logger("pipeline")
 
 
-# Fallback labels — usadas apenas se label_mappings estiver vazio ou o Supabase
-# falhar. Em produção, cada org define suas próprias labels via tabela
-# label_mappings. Esse fallback preserva o comportamento da LORDS em caso
-# de indisponibilidade do banco (safety net, não fonte de verdade).
-# 'fechou' e 'perdeu' foram removidos — agora são representados via
-# deals.status ('won' / 'lost'), não via label.
+# DEPRECATED: Fallback de labels da Aurora era usado quando label_mappings
+# vinha vazio. Agora a fonte de verdade é pipeline_stages.chatwoot_label
+# (populado por org). Mantemos fallback mínimo só pra not-crash em casos extremos.
 STAGE_LABELS_FALLBACK = {
     "01-novo-contato",
-    "02-qualificacao",
-    "03-reuniao-agendada",
-    "04-proposta-enviada",
-    "05-em-negociacao",
 }
 
 

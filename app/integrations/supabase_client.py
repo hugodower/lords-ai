@@ -896,6 +896,116 @@ async def get_pipeline_stages(org_id: str, pipeline_id: str = None) -> list[dict
         return []
 
 
+# Cache simples com TTL pra não bater no Supabase a cada webhook
+_stage_role_cache: dict[tuple[str, str], tuple[float, dict | None]] = {}
+_org_labels_cache: dict[str, tuple[float, list[str]]] = {}
+_CACHE_TTL_SECONDS = 300  # 5 minutos
+
+
+async def get_stage_by_role(org_id: str, role: str) -> dict | None:
+    """
+    Retorna o stage da org com semantic_role específico.
+
+    Args:
+        org_id: UUID da organização
+        role: semantic_role (ex: 'ai_qualified', 'ai_proposal', 'quote_sent')
+
+    Returns:
+        dict com id, name, position, chatwoot_label, semantic_role,
+        ou None se a org não tem esse role mapeado.
+    """
+    cache_key = (org_id, role)
+    now = _time.time()
+    cached = _stage_role_cache.get(cache_key)
+    if cached and (now - cached[0]) < _CACHE_TTL_SECONDS:
+        return cached[1]
+
+    sb = get_supabase()
+    try:
+        # Busca o pipeline da org primeiro
+        pipe_resp = (
+            sb.table("pipelines")
+            .select("id")
+            .eq("organization_id", org_id)
+            .order("created_at")
+            .limit(1)
+            .execute()
+        )
+        if not pipe_resp or not pipe_resp.data:
+            log.warning("[PIPELINE:ROLE] No pipeline found for org=%s", org_id)
+            _stage_role_cache[cache_key] = (now, None)
+            return None
+        pipeline_id = pipe_resp.data[0]["id"]
+
+        # Busca stage pelo semantic_role
+        resp = (
+            sb.table("pipeline_stages")
+            .select("id, name, position, chatwoot_label, semantic_role")
+            .eq("pipeline_id", pipeline_id)
+            .eq("semantic_role", role)
+            .limit(1)
+            .execute()
+        )
+        result = resp.data[0] if resp.data else None
+        _stage_role_cache[cache_key] = (now, result)
+
+        if result:
+            log.info(
+                "[PIPELINE:ROLE] org=%s role=%s → label=%s",
+                org_id, role, result.get("chatwoot_label")
+            )
+        else:
+            log.warning(
+                "[PIPELINE:ROLE] org=%s has no stage with role=%s (org pode não usar esse trigger)",
+                org_id, role
+            )
+        return result
+    except Exception as exc:
+        log.error("[PIPELINE:ROLE] FAILED to get stage for org=%s role=%s: %s", org_id, role, exc)
+        return None
+
+
+async def get_all_chatwoot_labels(org_id: str) -> list[str]:
+    """
+    Retorna todos os chatwoot_label da org, ordenados por position.
+    Usado pelo context_builder pra preencher {valid_labels} no prompt do agente.
+    """
+    now = _time.time()
+    cached = _org_labels_cache.get(org_id)
+    if cached and (now - cached[0]) < _CACHE_TTL_SECONDS:
+        return cached[1]
+
+    sb = get_supabase()
+    try:
+        pipe_resp = (
+            sb.table("pipelines")
+            .select("id")
+            .eq("organization_id", org_id)
+            .order("created_at")
+            .limit(1)
+            .execute()
+        )
+        if not pipe_resp or not pipe_resp.data:
+            _org_labels_cache[org_id] = (now, [])
+            return []
+        pipeline_id = pipe_resp.data[0]["id"]
+
+        resp = (
+            sb.table("pipeline_stages")
+            .select("chatwoot_label, position")
+            .eq("pipeline_id", pipeline_id)
+            .not_.is_("chatwoot_label", "null")
+            .order("position")
+            .execute()
+        )
+        labels = [s["chatwoot_label"] for s in (resp.data or []) if s.get("chatwoot_label")]
+        _org_labels_cache[org_id] = (now, labels)
+        return labels
+    except Exception as exc:
+        log.error("[PIPELINE:LABELS] FAILED to get labels for org=%s: %s", org_id, exc)
+        return []
+
+
 async def find_contact_by_phone(org_id: str, phone: str) -> Optional[dict]:
     """Find contact trying multiple phone formats (exact, +/- prefix, digits suffix)."""
     import re as _re

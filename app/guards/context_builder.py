@@ -187,18 +187,19 @@ async def build_context(
 
     # Format valid labels (stage labels da org — Aurora NUNCA deve inventar
     # label fora dessa lista)
-    if label_mappings:
+    # Fonte de verdade dos labels: pipeline_stages.chatwoot_label da org
+    org_labels = await sb.get_all_chatwoot_labels(org_id)
+    if org_labels:
+        valid_labels_text = "\n".join(f"- {label}" for label in org_labels)
+    elif label_mappings:
+        # Fallback legacy: usa label_mappings se pipeline_stages estiver vazio
         valid_labels_text = "\n".join(
             f"- {m['chatwoot_label']}" for m in label_mappings if m.get("chatwoot_label")
         )
     else:
-        valid_labels_text = (
-            "- 01-novo-contato\n"
-            "- 02-qualificacao\n"
-            "- 03-reuniao-agendada\n"
-            "- 04-proposta-enviada\n"
-            "- 05-em-negociacao"
-        )
+        # Último fallback: só o stage de entrada (não-crash)
+        log.warning("[CONTEXT_BUILDER] No labels found for org=%s — using minimum fallback", org_id)
+        valid_labels_text = "- 01-novo-contato"
 
     # Format company info
     if company:
