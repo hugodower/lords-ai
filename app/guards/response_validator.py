@@ -92,6 +92,73 @@ def _validate_forbidden_only(text: str, forbidden_topics: list[str]) -> Validati
     return ValidationResult(True)
 
 
+def extract_product_prices(text: str) -> list[tuple[str, float]]:
+    """
+    Retorna lista de (produto_mencionado, preço_associado).
+    Só retorna R$ que estão a ≤100 chars de uma menção de produto.
+    """
+    PRODUCT_PATTERNS = [
+        r"Multiplica[çc][ãa]o\s*(?:de\s*)?(\d+)\s*kg",  # "Multiplicação 10kg", "Multiplicação de 20 kg"
+        r"Bovnance(?:\s*\d+\s*g)?",                       # "Bovnance" ou "Bovnance 80g"
+        r"Probimais\s*R?",                                # "Probimais R"
+        r"MultSacch",                                     # "MultSacch"
+        r"saco\s*(?:de\s*)?(\d+)\s*kg",                  # "saco 10kg", "saco de 20 kg"
+        r"embalagem\s*(?:de\s*)?(\d+)\s*kg",             # "embalagem 10kg"
+    ]
+
+    PRICE_PATTERN = re.compile(r"R\$\s*([\d.,]+)")
+
+    product_prices = []
+    for pattern in PRODUCT_PATTERNS:
+        for product_match in re.finditer(pattern, text, re.IGNORECASE):
+            # Janela ±100 chars
+            start = max(0, product_match.start() - 100)
+            end = min(len(text), product_match.end() + 100)
+            window = text[start:end]
+
+            for price_match in PRICE_PATTERN.finditer(window):
+                price_str = price_match.group(1).replace(".", "").replace(",", ".")
+                try:
+                    price_val = float(price_str)
+                    product_prices.append((product_match.group(0), price_val))
+                except ValueError:
+                    pass
+
+    return product_prices
+
+
+def _is_valid_product_price(price: float, catalog_prices: list[float]) -> bool:
+    """
+    Valida se preço é legítimo baseado no catálogo.
+    Aceita: exatos, descontos 15%, múltiplos, e somas de até 2 SKUs.
+    """
+    # Match exato
+    for catalog_price in catalog_prices:
+        if abs(price - catalog_price) < 0.01:
+            return True
+
+    # Desconto legítimo 15%
+    for catalog_price in catalog_prices:
+        if catalog_price * 0.85 <= price <= catalog_price:
+            return True
+
+    # Múltiplos exatos (2 a 10x do mesmo SKU)
+    for catalog_price in catalog_prices:
+        for multiplier in range(2, 11):
+            if abs(price - catalog_price * multiplier) < 0.50:
+                return True
+
+    # Soma de até 2 SKUs diferentes (ex: 2×20kg + 1×10kg)
+    for p1 in catalog_prices:
+        for p2 in catalog_prices:
+            for n1 in range(1, 11):
+                for n2 in range(1, 11):
+                    if abs(price - (p1 * n1 + p2 * n2)) < 0.50:
+                        return True
+
+    return False
+
+
 def validate_response(
     output: "AgentOutput",
     products: list[dict],
@@ -151,10 +218,8 @@ def validate_response(
 
     text_lower = text.lower()
 
-    # 3. Check prices — extract numbers that look like prices
-    price_pattern = r"R\$\s*[\d.,]+"
-    mentioned_prices = re.findall(price_pattern, text)
-    if mentioned_prices and products:
+    # 3. Check prices — validate only product-associated prices (context-based)
+    if products:
         catalog_prices = []
         for p in products:
             price = p.get("unit_price")
@@ -162,59 +227,30 @@ def validate_response(
                 catalog_prices.append(float(price))
 
         if catalog_prices:
-            min_catalog_price = min(catalog_prices)
-            max_catalog_price = max(catalog_prices)
+            # Extract only prices associated with product mentions
+            product_prices = extract_product_prices(text)
 
-            for mentioned in mentioned_prices:
-                # Extract numeric value
-                value = re.sub(r"[R$\s.]", "", mentioned).replace(",", ".")
-                try:
-                    val = float(value)
+            if not product_prices:
+                # No product-associated prices found — text only has calculated values
+                log.info("[VALIDATOR] No product-associated prices found, skipping price validation")
+            else:
+                max_catalog_price = max(catalog_prices)
 
-                    # Allow exact matches first
-                    exact_match = any(
-                        abs(val - catalog_price) < 0.01 for catalog_price in catalog_prices
-                    )
-                    if exact_match:
-                        continue
-
-                    # Allow legitimate discounts: within 15% below any catalog price
-                    discount_match = any(
-                        catalog_price * 0.85 <= val <= catalog_price
-                        for catalog_price in catalog_prices
-                    )
-                    if discount_match:
-                        continue
-
-                    # Allow derived small values (per-day, per-month costs)
-                    # If mentioned price is less than 1/4 of smallest catalog price
-                    if val < min_catalog_price * 0.25:
-                        continue
-
-                    # Block prices clearly above catalog max (hallucination/inflation)
-                    if val > max_catalog_price:
+                for product, price in product_prices:
+                    # _is_valid_product_price já cobre: exato, desconto 15%, múltiplos 2-10x,
+                    # somas de até 2 SKUs (1-10 cada). Qualquer valor acima disso já
+                    # retorna False naturalmente, então check de "above max × 1.5" é
+                    # redundante e bloqueia múltiplos legítimos (ex: R$ 1.080,80 = 2 sacos 20kg).
+                    if not _is_valid_product_price(price, catalog_prices):
                         log.warning(
-                            "[VALIDATOR] blocked_price: R$ %.2f above catalog max R$ %.2f",
-                            val, max_catalog_price
+                            "[VALIDATOR] blocked_price: R$ %.2f invalid for product %s",
+                            price, product
                         )
                         return ValidationResult(
                             False,
-                            f"Preço mencionado ({mentioned}) acima do catálogo",
+                            f"Preço inválido R$ {price:.2f} associado a {product}",
                             "blocked_price",
                         )
-
-                    # Block other invalid prices (between min_catalog/4 and min_catalog*0.85)
-                    log.warning(
-                        "[VALIDATOR] blocked_price: R$ %.2f not in valid range", val
-                    )
-                    return ValidationResult(
-                        False,
-                        f"Preço mencionado ({mentioned}) não encontrado no catálogo",
-                        "blocked_price",
-                    )
-
-                except ValueError:
-                    pass
 
     # 4. Forbidden promises
     for word in PROMISE_WORDS:
