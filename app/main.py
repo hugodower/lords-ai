@@ -172,6 +172,19 @@ async def process_message(req: ProcessMessageRequest):
 # ── Chatwoot webhook ─────────────────────────────────────────────────
 
 
+def has_audio_attachment(payload: dict) -> bool:
+    """
+    Detecta se o payload do Chatwoot tem attachment de áudio.
+    Cobre file_types comuns do WhatsApp/Chatwoot: audio, voice, voice_message.
+    """
+    attachments = payload.get("attachments") or []
+    for att in attachments:
+        file_type = str(att.get("file_type", "")).lower()
+        if file_type in ("audio", "voice", "voice_message"):
+            return True
+    return False
+
+
 @app.post("/api/v1/webhook/chatwoot")
 async def chatwoot_webhook(request: Request):
     try:
@@ -220,7 +233,11 @@ async def chatwoot_webhook(request: Request):
         return JSONResponse({"status": "ignored", "reason": "self_message"})
 
     content = (payload.get("content") or "").strip()
-    if not content:
+    audio_only = has_audio_attachment(payload) and not content
+
+    # Early-return APENAS se não tem content E não é áudio puro
+    # (áudio puro continua pra resolver org_id e responder pedindo texto)
+    if not content and not audio_only:
         return JSONResponse({"status": "ignored", "reason": "empty_content"})
 
     try:
@@ -345,6 +362,24 @@ async def chatwoot_webhook(request: Request):
                 "[WEBHOOK] Org não encontrada para account_id=%s, usando default %s",
                 account_id, org_id,
             )
+
+        # Se é áudio puro, responde pedindo texto e encerra (não passa pelo Claude)
+        if audio_only:
+            log.info(
+                "[AUDIO:DETECTED] conv=%s org=%s phone=%s — asking client to send as text",
+                conversation_id, org_id, contact_phone
+            )
+            try:
+                await chatwoot_client.send_message(
+                    conversation_id,
+                    "Recebi seu áudio! Por enquanto consigo te ajudar melhor por texto. Pode mandar a mensagem escrita pra eu te responder na hora?",
+                    org_id=org_id,
+                )
+                log.info("[AUDIO:RESPONSE_SENT] conv=%s", conversation_id)
+                return JSONResponse({"status": "audio_response_sent"})
+            except Exception as exc:
+                log.error("[AUDIO:RESPONSE_FAILED] conv=%s: %s", conversation_id, exc)
+                return JSONResponse({"status": "audio_response_failed", "error": str(exc)})
 
         log.info(
             "[WEBHOOK] org=%s conv=%s phone=%s name=%s msg=%s",
