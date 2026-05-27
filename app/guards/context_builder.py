@@ -300,30 +300,39 @@ async def build_context(
     else:
         agreed_text = ""
 
+    # Log agent config keys for debugging
+    log.info(f"[CONTEXT:KEYS] agent_cfg keys: {list(agent_config.keys())}")
+
     # Replace placeholders
-    prompt = template.format(
-        current_datetime=current_datetime_text,
-        agreed_schedule=agreed_text,
-        agent_name=agent_config.get("agent_name", "Ana"),
-        role="assistente de vendas" if agent_type == "sdr" else "assistente de suporte",
-        personality=agent_config.get("personality", "Profissional, simpática e objetiva."),
-        company_name=company.get("company_name", "a empresa") if company else "a empresa",
-        company_description=company_description,
-        post_scheduling_process=post_scheduling_process,
-        forbidden_topics=forbidden_text,
-        valid_labels=valid_labels_text,
-        qualification_steps=steps_text,
-        hot_criteria=hot_criteria or "Quando demonstrar interesse claro em comprar/agendar.",
-        products_list=products_text,
-        quick_responses=faq_text,
-        rag_context=rag_text,
-        company_info=company_text,
-        scheduling_info=sched_text,
-        conversation_history=history_text,
-        contact_name=contact_name or "Não informado",
-        contact_phone=contact_phone,
-        deal_stage=await _get_deal_stage_for_context(org_id, contact_phone),
-    )
+    try:
+        prompt = template.format(
+            current_datetime=current_datetime_text,
+            agreed_schedule=agreed_text,
+            agent_name=agent_config.get("agent_name", "Ana"),
+            role="assistente de vendas" if agent_type == "sdr" else "assistente de suporte",
+            personality=agent_config.get("personality", "Profissional, simpática e objetiva."),
+            company_name=company.get("company_name", "a empresa") if company else "a empresa",
+            company_description=company_description,
+            post_scheduling_process=post_scheduling_process,
+            forbidden_topics=forbidden_text,
+            valid_labels=valid_labels_text,
+            qualification_steps=steps_text,
+            hot_criteria=hot_criteria or "Quando demonstrar interesse claro em comprar/agendar.",
+            products_list=products_text,
+            quick_responses=faq_text,
+            rag_context=rag_text,
+            company_info=company_text,
+            scheduling_info=sched_text,
+            conversation_history=history_text,
+            contact_name=contact_name or "Não informado",
+            contact_phone=contact_phone,
+            deal_stage=await _get_deal_stage_for_context(org_id, contact_phone),
+            handoff_agent_name=agent_config.get("handoff_agent_name") or "nosso especialista",
+        )
+    except KeyError as e:
+        template_path = agent_config.get("template_path", f"{agent_type}_system_prompt.md")
+        log.error(f"[CONTEXT:MISSING_KEY] key={e} agent_cfg_keys={list(agent_config.keys())} template={template_path}")
+        raise
 
     # Detect origin and inject specific instructions
     inbox_origin = _detect_inbox_origin(channel)
