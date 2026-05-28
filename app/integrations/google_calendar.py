@@ -426,6 +426,65 @@ class GoogleCalendarClient:
             log.error("[GCAL] Cancel event error: %s", exc)
             return False
 
+    async def check_freebusy(
+        self,
+        calendar_id: str,
+        time_min: datetime,
+        time_max: datetime,
+    ) -> dict:
+        """Check if calendar is busy in specific time range. Returns full freebusy response."""
+        log.info(
+            "[GCAL:FREEBUSY_CHECK] check_freebusy — calendar=%s, time_min=%s, time_max=%s",
+            calendar_id, time_min.isoformat(), time_max.isoformat(),
+        )
+
+        access_token = await self._get_access_token()
+        if not access_token:
+            log.error("[GCAL:FREEBUSY_CHECK] No access token — aborting freebusy check")
+            return {}
+
+        freebusy_payload = {
+            "timeMin": time_min.isoformat(),
+            "timeMax": time_max.isoformat(),
+            "timeZone": TIMEZONE,
+            "items": [{"id": calendar_id}],
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                log.info("[GCAL:FREEBUSY_CHECK] POST %s/freeBusy — payload=%s", BASE_URL, freebusy_payload)
+                resp = await client.post(
+                    f"{BASE_URL}/freeBusy",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    json=freebusy_payload,
+                )
+                log.info("[GCAL:FREEBUSY_CHECK] Response — status=%s", resp.status_code)
+
+                # 401/403 → force refresh and retry once
+                if resp.status_code in (401, 403):
+                    log.warning("[GCAL:FREEBUSY_CHECK] Got %s — forcing token refresh and retrying", resp.status_code)
+                    access_token = await self._get_access_token(force_refresh=True)
+                    if not access_token:
+                        log.error("[GCAL:FREEBUSY_CHECK] Refresh failed — reautorizacao necessaria para org %s", self.org_id)
+                        return {}
+                    resp = await client.post(
+                        f"{BASE_URL}/freeBusy",
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        json=freebusy_payload,
+                    )
+                    log.info("[GCAL:FREEBUSY_CHECK] Retry response — status=%s", resp.status_code)
+
+                if resp.status_code != 200:
+                    log.error("[GCAL:FREEBUSY_CHECK] FreeBusy FAILED — status=%s, body=%s", resp.status_code, resp.text)
+                    return {}
+
+                busy_data = resp.json()
+                log.info("[GCAL:FREEBUSY_CHECK] Response body keys=%s", list(busy_data.keys()))
+                return busy_data
+        except Exception as exc:
+            log.error("[GCAL:FREEBUSY_CHECK] FreeBusy EXCEPTION: %s — %s", type(exc).__name__, exc, exc_info=True)
+            return {}
+
     async def get_upcoming_events(
         self,
         calendar_id: str,

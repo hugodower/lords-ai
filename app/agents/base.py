@@ -589,6 +589,18 @@ class BaseAgent(ABC):
                             sched_result.get("message")
                             or "Essa data ja passou! Pode me dizer outro dia e horario?"
                         )
+                    # Handle scheduling conflicts with alternative slots
+                    elif error_detail == "schedule_conflict":
+                        base_msg = sched_result.get("message", "O horário está ocupado na minha agenda.")
+                        alternative_slots = sched_result.get("alternative_slots", [])
+                        if alternative_slots:
+                            alternatives_text = ", ".join(slot.get("display", "") for slot in alternative_slots[:3])
+                            output.text = f"{base_msg} Posso te oferecer: {alternatives_text} — qual fica melhor?"
+                        else:
+                            output.text = f"{base_msg} Que tal me dar outras opções de horário?"
+                    # Handle validation failures (fail closed for safety)
+                    elif error_detail == "could_not_verify_availability":
+                        output.text = sched_result.get("message") or "Não consegui confirmar a disponibilidade desse horário agora. Pode tentar de novo daqui a pouco ou escolher outro horário?"
                     else:
                         output.text = _sched_error_msg
                     action = "continue"

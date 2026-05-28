@@ -337,6 +337,62 @@ async def execute_scheduling(
                 "end": end.isoformat(),
             }
 
+        # Step 2.7: CHECK FOR CONFLICTS before creating the event
+        log.info("[SCHEDULE] Step 2.7: Checking for conflicts in requested slot...")
+        cal_client = _build_gcal_client(config, org_id)
+        if not cal_client:
+            log.error("[SCHEDULE] Could not build Google Calendar client for conflict check")
+            return {"success": False, "error": "Calendar service unavailable"}
+
+        calendar_id = config.get("google_calendar_id", "primary")
+        busy_check = await cal_client.check_freebusy(
+            calendar_id=calendar_id,
+            time_min=start,
+            time_max=end,
+        )
+
+        # CRITICAL: fail closed — if we can't verify availability, DO NOT create the event
+        if not busy_check or "calendars" not in busy_check:
+            log.error(
+                "[SCHEDULE] FreeBusy validation FAILED — could not verify availability. "
+                "Aborting create to prevent overlapping events. conv=%s requested=%s/%s",
+                conversation_id, start.isoformat(), end.isoformat(),
+            )
+            return {
+                "status": "validation_failed",
+                "success": False,
+                "error": "could_not_verify_availability",
+                "requested_start": start.isoformat(),
+                "requested_end": end.isoformat(),
+                "message": "Não consegui confirmar a disponibilidade desse horário agora. Pode tentar de novo daqui a pouco ou escolher outro horário?",
+            }
+
+        # Extract busy periods for the specific calendar
+        busy_periods = busy_check.get("calendars", {}).get(calendar_id, {}).get("busy", [])
+
+        if busy_periods:
+            log.warning(
+                "[SCHED:CONFLICT] requested=%s/%s busy_overlap=%s conv=%s",
+                start.isoformat(), end.isoformat(), busy_periods, conversation_id,
+            )
+
+            try:
+                alternative_slots = await get_available_slots(org_id, days_ahead=7)
+            except Exception as alt_err:
+                log.warning("[SCHED:CONFLICT] Error getting alternatives: %s", alt_err)
+                alternative_slots = []
+
+            return {
+                "status": "conflict",
+                "success": False,
+                "error": "schedule_conflict",
+                "requested_start": start.isoformat(),
+                "requested_end": end.isoformat(),
+                "conflicting_periods": busy_periods,
+                "alternative_slots": alternative_slots[:3],
+                "message": f"O horário das {start.strftime('%H:%M')} está ocupado na minha agenda.",
+            }
+
         # Get company info for the event
         log.info("[SCHEDULE] Step 3: Fetching company_info ...")
         company = await sb.get_company_info(org_id)
