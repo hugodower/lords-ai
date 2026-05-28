@@ -455,6 +455,32 @@ async def execute_scheduling(
             start.isoformat(), end.isoformat(),
         )
 
+        # Persist scheduled meeting to internal table (best-effort)
+        try:
+            await sb.insert_scheduled_meeting({
+                "organization_id": org_id,
+                "conversation_id": conversation_id,
+                "contact_id": None,  # TODO: add if available in scope
+                "deal_id": None,     # TODO: add if available in scope
+                "gcal_event_id": event.get("id"),
+                "gcal_calendar_id": calendar_id,
+                "gcal_html_link": event.get("htmlLink"),
+                "start_at": start.isoformat(),
+                "end_at": end.isoformat(),
+                "attendee_email": final_email,
+                "attendee_name": final_name,
+                "attendee_phone": final_whatsapp,
+                "status": "scheduled",
+                "rsvp_status": "needsAction",
+                "created_via": "aurora",
+            })
+            log.info("[SCHED:PERSIST] OK — event_id=%s org=%s", event.get("id"), org_id)
+        except Exception as persist_err:
+            log.warning(
+                "[SCHED:PERSIST] FAILED but not blocking — event_id=%s err=%s",
+                event.get("id"), persist_err
+            )
+
         # Schedule booking follow-ups (confirmacao_agendamento + lembrete_reuniao)
         if conversation_id:
             try:

@@ -1522,3 +1522,32 @@ async def create_activity(
     except Exception as exc:
         log.error(f"[PIPELINE:ACTIVITY] FAILED to create activity: {exc}", exc_info=True)
         return None
+
+
+# ── Scheduled Meetings ────────────────────────────────────────────────
+
+
+async def insert_scheduled_meeting(data: dict) -> Optional[dict]:
+    """Insert a new scheduled meeting record. Returns the created row or None on failure."""
+    sb = get_supabase()
+    try:
+        log.info(
+            "[SCHED:PERSIST] Inserting scheduled_meeting — org=%s event_id=%s start=%s",
+            data.get("organization_id"), data.get("gcal_event_id"), data.get("start_at")
+        )
+
+        resp = sb.table("scheduled_meetings").insert(data).execute()
+
+        if resp and resp.data and len(resp.data) > 0:
+            created = resp.data[0]
+            log.info(
+                "[SCHED:PERSIST] SUCCESS — id=%s event_id=%s org=%s",
+                created.get("id"), created.get("gcal_event_id"), created.get("organization_id")
+            )
+            return created
+
+        log.error("[SCHED:PERSIST] FAILED — insert returned no data: %s", resp)
+        return None
+    except Exception as exc:
+        log.error("[SCHED:PERSIST] FAILED to insert scheduled_meeting: %s", exc, exc_info=True)
+        return None
