@@ -32,20 +32,22 @@ async def get_agent_config(org_id: str, agent_type: str) -> Optional[dict]:
             .eq("organization_id", org_id)
             .eq("agent_type", agent_type)
             .eq("is_active", True)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
-        if resp and resp.data:
+        rows = resp.data if resp else []
+        config = rows[0] if rows else None
+        if config:
             log.info(
                 "[CONFIG] Loaded agent_config for org=%s type=%s — name=%s, personality=%s chars, sandbox=%s",
                 org_id, agent_type,
-                resp.data.get("agent_name", "?"),
-                len(resp.data.get("personality") or ""),
-                resp.data.get("sandbox_mode", False),
+                config.get("agent_name", "?"),
+                len(config.get("personality") or ""),
+                config.get("sandbox_mode", False),
             )
         else:
             log.warning("[CONFIG] No active agent_config found for org=%s type=%s", org_id, agent_type)
-        return resp.data if resp else None
+        return config
     except Exception as exc:
         log.error("[CONFIG] FAILED to load agent_config for org=%s type=%s: %s", org_id, agent_type, exc)
         return None
@@ -79,14 +81,16 @@ async def get_company_info(org_id: str) -> Optional[dict]:
             sb.table("company_info")
             .select("*")
             .eq("organization_id", org_id)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
-        if resp and resp.data:
-            log.info("[CONFIG] Loaded company_info for org=%s — name=%s", org_id, resp.data.get("company_name", "?"))
+        rows = resp.data if resp else []
+        company = rows[0] if rows else None
+        if company:
+            log.info("[CONFIG] Loaded company_info for org=%s — name=%s", org_id, company.get("company_name", "?"))
         else:
             log.warning("[CONFIG] No company_info found for org=%s", org_id)
-        return resp.data if resp else None
+        return company
     except Exception as exc:
         log.error("[CONFIG] FAILED to load company_info for org=%s: %s", org_id, exc)
         return None
@@ -225,12 +229,16 @@ async def get_business_hours_config(org_id: str) -> Optional[dict]:
             sb.table("business_hours_config")
             .select("*")
             .eq("organization_id", org_id)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
-        if resp and resp.data:
+        rows = resp.data if resp else []
+        config = rows[0] if rows else None
+        if config:
             log.info("[CONFIG] Loaded business_hours_config for org=%s", org_id)
-        return resp.data if resp else None
+        else:
+            log.warning("[CONFIG] No business_hours_config found for org=%s", org_id)
+        return config
     except Exception as exc:
         log.error("[CONFIG] FAILED to load business_hours_config for org=%s: %s", org_id, exc)
         return None
@@ -246,17 +254,21 @@ async def get_scheduling_config(org_id: str) -> Optional[dict]:
             sb.table("scheduling_config")
             .select("*")
             .eq("organization_id", org_id)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
-        if resp and resp.data:
+        rows = resp.data if resp else []
+        config = rows[0] if rows else None
+        if config:
             log.info(
                 "[CONFIG] Loaded scheduling_config for org=%s — type=%s, gcal=%s",
                 org_id,
-                resp.data.get("scheduling_type", "?"),
-                bool(resp.data.get("google_oauth_token")),
+                config.get("scheduling_type", "?"),
+                bool(config.get("google_oauth_token")),
             )
-        return resp.data if resp else None
+        else:
+            log.warning("[CONFIG] No scheduling_config found for org=%s", org_id)
+        return config
     except Exception as exc:
         log.error("[CONFIG] FAILED to load scheduling_config for org=%s: %s", org_id, exc)
         return None
@@ -349,19 +361,21 @@ async def update_deal_ai_fields(
     sb = get_supabase()
     # Find contact by phone
     try:
-        contact = (
+        resp = (
             sb.table("contacts")
             .select("id")
             .eq("organization_id", org_id)
             .eq("phone", contact_phone)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
+        rows = resp.data if resp else []
+        contact = rows[0] if rows else None
     except Exception:
         return
-    if not contact or not contact.data:
+    if not contact:
         return
-    contact_id = contact.data["id"]
+    contact_id = contact["id"]
     # Update deals linked to this contact
     sb.table("deals").update(
         {"ai_participated": True, "ai_agent_type": agent_type}
@@ -418,12 +432,16 @@ async def get_followup_config(org_id: str) -> Optional[dict]:
             sb.table("followup_config")
             .select("*")
             .eq("organization_id", org_id)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
-        if resp and resp.data:
+        rows = resp.data if resp else []
+        config = rows[0] if rows else None
+        if config:
             log.info("[FOLLOWUP] Loaded followup_config for org=%s", org_id)
-        return resp.data if resp else None
+        else:
+            log.warning("[FOLLOWUP] No followup_config found for org=%s", org_id)
+        return config
     except Exception as exc:
         log.error("[FOLLOWUP] FAILED to load followup_config for org=%s: %s", org_id, exc)
         return None
@@ -583,12 +601,14 @@ async def get_whatsapp_credentials(org_id: str) -> Optional[dict]:
             sb.table("chatwoot_connections")
             .select("whatsapp_phone_number_id, whatsapp_access_token")
             .eq("organization_id", org_id)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
-        if resp and resp.data:
-            pid = resp.data.get("whatsapp_phone_number_id")
-            token = resp.data.get("whatsapp_access_token")
+        rows = resp.data if resp else []
+        creds = rows[0] if rows else None
+        if creds:
+            pid = creds.get("whatsapp_phone_number_id")
+            token = creds.get("whatsapp_access_token")
             if pid and token:
                 return {"phone_number_id": pid, "access_token": token}
             log.warning(
@@ -596,7 +616,7 @@ async def get_whatsapp_credentials(org_id: str) -> Optional[dict]:
                 org_id, bool(pid), bool(token),
             )
         else:
-            log.warning("[FOLLOWUP] No chatwoot_connections found for org %s", org_id)
+            log.info("[FOLLOWUP] No chatwoot_connections found for org %s", org_id)
         return None
     except Exception as exc:
         log.error("[FOLLOWUP] FAILED to get WhatsApp creds for org %s: %s", org_id, exc)
@@ -648,11 +668,13 @@ async def get_contact_memory(
                 .select("*")
                 .eq("organization_id", org_id)
                 .eq("contact_phone", phone_digits)
-                .maybe_single()
+                .limit(1)
                 .execute()
             )
-            if resp and resp.data:
-                return resp.data
+            rows = resp.data if resp else []
+            memory = rows[0] if rows else None
+            if memory:
+                return memory
 
         # 2) Fallback: try by chatwoot_contact_id (cw: prefix)
         if chatwoot_contact_id:
@@ -662,11 +684,13 @@ async def get_contact_memory(
                 .select("*")
                 .eq("organization_id", org_id)
                 .eq("contact_phone", cw_key)
-                .maybe_single()
+                .limit(1)
                 .execute()
             )
-            if resp and resp.data:
-                return resp.data
+            rows = resp.data if resp else []
+            memory = rows[0] if rows else None
+            if memory:
+                return memory
 
         return None
     except Exception as exc:
@@ -766,12 +790,16 @@ async def get_chatwoot_connection(org_id: str) -> Optional[dict]:
             sb.table("chatwoot_connections")
             .select("*")
             .eq("organization_id", org_id)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
-        if resp and resp.data:
+        rows = resp.data if resp else []
+        connection = rows[0] if rows else None
+        if connection:
             log.info("[PIPELINE] Loaded chatwoot_connection for org=%s", org_id)
-        return resp.data if resp else None
+        else:
+            log.warning("[PIPELINE] No chatwoot_connection found for org=%s", org_id)
+        return connection
     except Exception as exc:
         log.error("[PIPELINE] FAILED to get chatwoot_connection for org=%s: %s", org_id, exc)
         return None
@@ -1021,20 +1049,24 @@ async def find_contact_by_phone(org_id: str, phone: str) -> Optional[dict]:
             resp = (
                 sb.table("contacts").select(cols)
                 .eq("organization_id", org_id).eq("phone", variant)
-                .maybe_single().execute()
+                .limit(1).execute()
             )
-            if resp and resp.data:
-                return resp.data
+            rows = resp.data if resp else []
+            contact = rows[0] if rows else None
+            if contact:
+                return contact
 
         # 2) Try without/with + prefix
         alt = clean[1:] if clean.startswith("+") else "+" + clean
         resp = (
             sb.table("contacts").select(cols)
             .eq("organization_id", org_id).eq("phone", alt)
-            .maybe_single().execute()
+            .limit(1).execute()
         )
-        if resp and resp.data:
-            return resp.data
+        rows = resp.data if resp else []
+        contact = rows[0] if rows else None
+        if contact:
+            return contact
 
         # 3) Suffix match (last 10-11 digits)
         if len(digits) >= 10:
@@ -1205,18 +1237,20 @@ async def capture_contact_phone(
         # 3) Migrate contact_memory key from cw:{id} → real phone digits
         cw_key = f"cw:{chatwoot_contact_id}"
         try:
-            existing = (
+            resp = (
                 sb.table("contact_memory")
                 .select("id")
                 .eq("organization_id", org_id)
                 .eq("contact_phone", cw_key)
-                .maybe_single()
+                .limit(1)
                 .execute()
             )
-            if existing and existing.data:
+            rows = resp.data if resp else []
+            existing = rows[0] if rows else None
+            if existing:
                 sb.table("contact_memory").update(
                     {"contact_phone": digits}
-                ).eq("id", existing.data["id"]).execute()
+                ).eq("id", existing["id"]).execute()
                 log.info("[CHANNEL:CAPTURE:MEMORY] Memory key migrated: %s → %s", cw_key, digits)
         except Exception as mem_exc:
             log.warning("[CHANNEL:CAPTURE:MEMORY] Migration failed: %s", mem_exc)
