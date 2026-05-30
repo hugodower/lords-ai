@@ -303,15 +303,24 @@ async def build_context(
     # Log agent config keys for debugging
     log.info(f"[CONTEXT:KEYS] agent_cfg keys: {list(agent_config.keys())}")
 
+    # Validate and extract agent config with safe defaults
+    agent_name = agent_config.get("agent_name")
+    if not agent_name:
+        log.error(f"[CONTEXT:CONFIG] Missing agent_name in config for org={org_id} — this is a configuration error")
+        agent_name = "Assistente"
+
+    company_name = company.get("company_name", "a empresa") if company else "a empresa"
+    personality = agent_config.get("personality", "Profissional, simpática e objetiva.")
+
     # Replace placeholders
     try:
         prompt = template.format(
             current_datetime=current_datetime_text,
             agreed_schedule=agreed_text,
-            agent_name=agent_config.get("agent_name", "Ana"),
+            agent_name=agent_name,
             role="assistente de vendas" if agent_type == "sdr" else "assistente de suporte",
-            personality=agent_config.get("personality", "Profissional, simpática e objetiva."),
-            company_name=company.get("company_name", "a empresa") if company else "a empresa",
+            personality=personality,
+            company_name=company_name,
             company_description=company_description,
             post_scheduling_process=post_scheduling_process,
             forbidden_topics=forbidden_text,
@@ -332,7 +341,60 @@ async def build_context(
     except KeyError as e:
         template_path = agent_config.get("template_path", f"{agent_type}_system_prompt.md")
         log.error(f"[CONTEXT:MISSING_KEY] key={e} agent_cfg_keys={list(agent_config.keys())} template={template_path}")
-        raise
+
+        # Create robust fallback with identity and JSON contract
+        log.warning(f"[CONTEXT:FALLBACK] Template format failed, creating fallback prompt with identity for org={org_id}")
+
+        prompt = f"""Você é {agent_name}, assistente virtual da {company_name}.
+
+## Sua personalidade
+{personality}
+
+## Instruções importantes
+- Responda de forma curta, máximo 3 linhas, sem listas, tom informal.
+- Não abra a conversa dizendo que é IA, mas se perguntarem diretamente, responda com transparência.
+- Nunca mencione Claude, Anthropic ou OpenAI.
+- Sempre mantenha o foco nos serviços da {company_name}.
+
+## Produtos e serviços disponíveis
+{products_text}
+
+## Informações da empresa
+{company_text}
+
+## FORMATO DE RESPOSTA OBRIGATÓRIO
+
+Sua resposta deve estar SEMPRE em formato JSON válido:
+
+{{
+  "text": "sua mensagem para o cliente",
+  "action": "continue",
+  "lead_temperature": "cold",
+  "skill_used": "general",
+  "summary": "resumo breve da conversa"
+}}
+
+## Histórico da conversa
+{history_text}
+
+## Dados do contato
+Nome: {contact_name or "Não informado"}
+Telefone: {contact_phone}
+
+Data e hora atual: {current_datetime_text}"""
+
+    # Guard de sanidade: verificar se prompt tem tamanho mínimo e identidade
+    if len(prompt) < 200 or agent_name not in prompt:
+        log.error(f"[CONTEXT:SANITY_FAIL] Generated prompt too short or missing identity for org={org_id}")
+        # Último recurso: prompt mínimo absolutamente seguro
+        prompt = f"""Você é {agent_name}, assistente virtual da {company_name}.
+
+{personality}
+
+Responda em formato JSON: {{"text": "mensagem", "action": "continue", "lead_temperature": "cold", "skill_used": "general"}}
+
+Histórico: {history_text}
+Contato: {contact_name or "Não informado"} ({contact_phone})"""
 
     # Detect origin and inject specific instructions
     inbox_origin = _detect_inbox_origin(channel)

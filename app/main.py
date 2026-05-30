@@ -421,6 +421,7 @@ async def chatwoot_webhook(request: Request):
         # Chatwoot webhook payload varies — assignee can be in:
         #   1. conversation.assignee (some events)
         #   2. conversation.meta.assignee (most common, conversation_updated)
+        # For message_created events, assignee is often missing from payload.
         # Ana auto-assigns to herself after each response (chatwoot.py:94-126),
         # so we must distinguish Ana from real humans by checking agent_id
         # against the AI agent's ID from agent_configs.
@@ -428,11 +429,50 @@ async def chatwoot_webhook(request: Request):
             conversation.get("assignee")
             or conversation.get("meta", {}).get("assignee")
         )
+
+        conv_id = conversation.get("id", "?")
+
+        # If assignee not in payload (common for message_created), fetch from Chatwoot API
+        if not assignee or not assignee.get("id"):
+            try:
+                import httpx
+                from app.services.pipeline_manager import _resolve_chatwoot_config
+
+                # Get Chatwoot connection for this org
+                conn = await sb.get_chatwoot_connection_cached(org_id)
+                base_url, cw_account_id, token = _resolve_chatwoot_config(conn)
+
+                # Fetch conversation details from Chatwoot API
+                headers = {"api_access_token": token}
+                async with httpx.AsyncClient(timeout=3) as client:
+                    resp = await client.get(
+                        f"{base_url}/api/v1/accounts/{cw_account_id}/conversations/{conv_id}",
+                        headers=headers,
+                    )
+                    if resp.status_code == 200:
+                        live_conv = resp.json()
+                        # Read assignee from both top-level and meta
+                        assignee = live_conv.get("assignee") or live_conv.get("meta", {}).get("assignee")
+                        if assignee:
+                            log.info(
+                                "[WEBHOOK] Conv %s — fetched assignee from API: id=%s name=%s",
+                                conv_id, assignee.get("id"), assignee.get("name")
+                            )
+                    else:
+                        log.warning(
+                            "[WEBHOOK] Conv %s — failed to fetch from API: %s",
+                            conv_id, resp.status_code
+                        )
+            except Exception as exc:
+                log.warning(
+                    "[WEBHOOK] Conv %s — error fetching assignee from API: %s",
+                    conv_id, exc
+                )
+
         if assignee and assignee.get("id"):
             assignee_id = assignee.get("id")
             assignee_name = assignee.get("name") or assignee.get("email") or assignee_id
             assignee_email = (assignee.get("email") or "").lower()
-            conv_id = conversation.get("id", "?")
 
             # Check if assignee is the AI agent (Ana) — get from agent_configs
             try:

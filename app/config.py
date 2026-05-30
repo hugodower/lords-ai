@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # Follow-up Worker
     followup_worker_enabled: bool = True  # Set to False to disable follow-up worker
 
+    # Legacy field from agent_configs table (currently unused by backend)
+    max_response_time_seconds: int = 10
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
