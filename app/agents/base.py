@@ -7,7 +7,7 @@ from typing import Optional
 
 from app.config import settings
 from app.guards.rate_limiter import check_rate_limit
-from app.guards.intent_classifier import classify_message_intent
+from app.guards.intent_classifier import classify_message_intent, classify_message_nature
 from app.guards.qualification_guard import is_generic_greeting
 from app.guards.context_builder import build_context
 from app.guards.response_validator import validate_response
@@ -175,6 +175,15 @@ class BaseAgent(ABC):
             return ProcessMessageResponse(action="ignored", error="Rate limited")
 
         # ── Layer 2: Intent classification ───────────────────────────
+        # ── Layer 2.1: Message nature classification (auto-reply detection) ──
+        nature = classify_message_nature(message)
+        if nature in {"auto_reply", "out_of_office", "wrong_number"}:
+            log.info(
+                "[CAMPAIGN:AUTO_REPLY_SKIPPED] conv=%s nature=%s message=%r",
+                conversation_id, nature, message[:100]
+            )
+            return ProcessMessageResponse(action="ignored", error=f"Auto-reply: {nature}")
+
         intent, handoff_note = await classify_message_intent(message)
         if handoff_note:
             # INTENT-based auto-handoff REMOVED
