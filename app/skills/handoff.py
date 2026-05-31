@@ -87,7 +87,11 @@ async def perform_handoff(
                 customer_message = "Deixa eu confirmar uns detalhes aqui e já te respondo, tá?"
             else:
                 # Intentional handoff: connect to specialist
-                customer_message = "Vou te conectar com o Luan, nosso especialista — ele te retorna em breve."
+                handoff_name = agent_config.get("handoff_agent_name")
+                if handoff_name:
+                    customer_message = f"Vou te conectar com {handoff_name}, do nosso time, que já te retorna por aqui."
+                else:
+                    customer_message = "Vou te conectar com nosso time, que já te retorna por aqui."
 
         # Send customer-facing message FIRST
         await chatwoot_client.send_message(conversation_id, customer_message, org_id=org_id)
