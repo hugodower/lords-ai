@@ -599,7 +599,7 @@ async def get_whatsapp_credentials(org_id: str) -> Optional[dict]:
     try:
         resp = (
             sb.table("chatwoot_connections")
-            .select("whatsapp_phone_number_id, whatsapp_access_token")
+            .select("phone_number_id, access_token_encrypted")
             .eq("organization_id", org_id)
             .limit(1)
             .execute()
@@ -607,8 +607,9 @@ async def get_whatsapp_credentials(org_id: str) -> Optional[dict]:
         rows = resp.data if resp else []
         creds = rows[0] if rows else None
         if creds:
-            pid = creds.get("whatsapp_phone_number_id")
-            token = creds.get("whatsapp_access_token")
+            # coluna "access_token_encrypted" tem nome enganoso: guarda o token Meta em plaintext
+            pid = creds.get("phone_number_id")
+            token = creds.get("access_token_encrypted")
             if pid and token:
                 return {"phone_number_id": pid, "access_token": token}
             log.warning(
