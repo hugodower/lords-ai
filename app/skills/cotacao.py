@@ -21,7 +21,7 @@ PRECO_ARROBA_PADRAO = 300.0          # valor que o Luan passou
 PRECO_KG_VIVO_RECRIA = 10.0          # R$/kg vivo (recria)
 AUMENTO_LEITE = 0.03                 # +3% producao
 PRECO_KG_ROI_LEITE = SACOS_PRECO[10] / 10   # 28,34 R$/kg (conservador)
-DIAS_MES, DIAS_TESTE = 30, 90
+DIAS_PROTOCOLO = 90   # regra de negocio: TODO protocolo Lebedenco e 90 dias (corte e leite)
 
 LABEL_SISTEMA = {"pasto": "pasto", "semi_confinado": "semiconfinamento",
                  "confinado": "confinamento"}
@@ -77,7 +77,7 @@ def _ganho_leite(vacas, producao_L_dia, preco_leite_L, sistema, dias):
             "lucro_vaca_periodo": lucro, "lucro_rebanho_periodo": round(lucro * vacas, 2)}
 
 
-def cotacao(animais, sistema, fase, dias=DIAS_TESTE, preco_arroba=None,
+def cotacao(animais, sistema, fase, dias=DIAS_PROTOCOLO, preco_arroba=None,
             preco_leite_L=None, producao_L_dia=None):
     kg = consumo_kg(animais, sistema, dias)
     sacos = montar_sacos(kg)
@@ -138,9 +138,10 @@ def _msg_leite(c):
 
 
 # ---- ponto de entrada chamado pelo BaseAgent ----
-def executar_cotacao(animais=None, sistema=None, fase=None, dias=90, preco_arroba=None,
+def executar_cotacao(animais=None, sistema=None, fase=None, dias=DIAS_PROTOCOLO, preco_arroba=None,
                      preco_leite_L=None, producao_L_dia=None) -> dict:
     """Retorna {success, cotacao_message, dados, erro}. Erro -> action vira 'continue'."""
+    dias = DIAS_PROTOCOLO  # regra fixa: todo protocolo e 90 dias; ignora qualquer dias que a Ana mandar
     if not animais or sistema not in DOSE_G_DIA or fase not in ("recria", "engorda", "leite"):
         return {"success": False, "dados": None, "cotacao_message": None,
                 "erro": ("Pra fechar o número certinho, me confirma: quantos animais, qual o sistema "
@@ -162,8 +163,8 @@ if __name__ == "__main__":
     for kwargs in [
         dict(animais=40, sistema="semi_confinado", fase="recria", dias=90),
         dict(animais=50, sistema="confinado", fase="engorda", dias=90),
-        dict(animais=30, sistema="semi_confinado", fase="leite", dias=30, producao_L_dia=20, preco_leite_L=2.80),
-        dict(animais=30, sistema="semi_confinado", fase="leite", dias=30),  # faltando dados
+        dict(animais=30, sistema="semi_confinado", fase="leite", dias=90, producao_L_dia=20, preco_leite_L=2.80),
+        dict(animais=30, sistema="semi_confinado", fase="leite", dias=90),  # faltando dados
     ]:
         r = executar_cotacao(**kwargs)
         print(("OK  " if r["success"] else "ASK ") + (r["cotacao_message"] or r["erro"]))
