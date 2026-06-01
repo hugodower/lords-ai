@@ -66,15 +66,26 @@ class OrcamentoInfo(BaseModel):
     valor_por_cabeca_brl: Optional[float] = None
 
 
+class CotacaoInput(BaseModel):
+    animais: int
+    sistema: str             # "pasto" | "semi_confinado" | "confinado"
+    fase: str                # "recria" | "engorda" | "leite"
+    dias: int = 90
+    preco_arroba: Optional[float] = None
+    preco_leite_L: Optional[float] = None
+    producao_L_dia: Optional[float] = None
+
+
 class AgentOutput(BaseModel):
     text: str
-    action: str = "continue"  # continue | handoff | schedule | update_crm
+    action: str = "continue"  # continue | handoff | schedule | update_crm | cotar
     skill_used: str = "qualify"
     lead_temperature: str = "cold"  # cold | warm | hot
     summary: Optional[str] = None
     crm_updates: Optional[CrmUpdates] = None
     schedule: Optional[ScheduleInfo] = None
     orcamento: Optional[OrcamentoInfo] = None
+    cotacao: Optional[CotacaoInput] = None
 
 
 # ── Knowledge ────────────────────────────────────────────────────────

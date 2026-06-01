@@ -614,6 +614,37 @@ class BaseAgent(ABC):
                         output.text = _sched_error_msg
                     action = "continue"
 
+        # Handle cotacao requested by the agent
+        if action == "cotar":
+            from app.skills.cotacao import executar_cotacao
+            if not output.cotacao:
+                log.error(
+                    "[COTACAO] action='cotar' but output.cotacao is NULL - "
+                    "Claude forgot to fill cotacao fields. conv=%s raw_text='%s'",
+                    conversation_id, output.text[:200],
+                )
+                output.text = ("Pra fechar o numero certinho, me confirma: quantos animais, "
+                               "qual o sistema (pasto, semiconfinamento ou confinamento) e a "
+                               "fase (recria, engorda ou leite)?")
+            else:
+                res = executar_cotacao(   # SINCRONA - nao usar await
+                    animais=output.cotacao.animais, sistema=output.cotacao.sistema,
+                    fase=output.cotacao.fase, dias=output.cotacao.dias,
+                    preco_arroba=output.cotacao.preco_arroba,
+                    preco_leite_L=output.cotacao.preco_leite_L,
+                    producao_L_dia=output.cotacao.producao_L_dia,
+                )
+                if res["success"]:
+                    log.info(
+                        "[COTACAO] quote sent conv=%s fase=%s animais=%s investimento=%s",
+                        conversation_id, output.cotacao.fase, output.cotacao.animais,
+                        res["dados"]["investimento"],
+                    )
+                    output.text = res["cotacao_message"]   # SUBSTITUI, igual schedule
+                else:
+                    output.text = res["erro"]
+            action = "continue"   # cotar e so mensagem, nunca dispara automacao downstream
+
         # Dedup check (skip for handoff — those are critical)
         if action != "handoff" and await is_duplicate_response(conversation_id, output.text):
             log.warning("[DEDUP] Duplicate response skipped for conv %s", conversation_id)
