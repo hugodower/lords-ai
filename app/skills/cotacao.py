@@ -73,8 +73,8 @@ def _ganho_leite(vacas, producao_L_dia, preco_leite_L, sistema, dias):
     receita = producao_L_dia * AUMENTO_LEITE * preco_leite_L * dias
     custo = (PRECO_KG_ROI_LEITE / 1000) * dose * dias
     lucro = round(receita - custo, 2)
-    return {"receita_vaca_mes": round(receita, 2), "custo_vaca_mes": round(custo, 2),
-            "lucro_vaca_mes": lucro, "lucro_rebanho_mes": round(lucro * vacas, 2)}
+    return {"receita_vaca_periodo": round(receita, 2), "custo_vaca_periodo": round(custo, 2),
+            "lucro_vaca_periodo": lucro, "lucro_rebanho_periodo": round(lucro * vacas, 2)}
 
 
 def cotacao(animais, sistema, fase, dias=DIAS_TESTE, preco_arroba=None,
@@ -128,12 +128,13 @@ def _msg_corte(c):
 def _msg_leite(c):
     s, g = c["sacos"], c["ganho"]
     frete = " com frete grátis" if c["frete_gratis"] else ""
-    sobra = f" Sobram {s['sobra_kg']:.0f}kg pro mês seguinte." if s["sobra_kg"] else ""
+    sobra = f" Sobram {s['sobra_kg']:.0f}kg que já adiantam o próximo ciclo." if s["sobra_kg"] else ""
     return (f"Pras suas {c['animais']} vacas em {LABEL_SISTEMA[c['sistema']]}, a dose é "
-            f"{DOSE_G_DIA[c['sistema']]}g por vaca/dia. Por mês dá {c['consumo_kg']:.0f}kg, que fecha "
-            f"em {_sacos_label(s['combinacao'])} = R${_r(c['investimento'])}{frete}.{sobra} No retorno, "
-            f"cada vaca rende em torno de R${_r(g['lucro_vaca_mes'])}/mês de lucro líquido (com o "
-            f"aumento de até 3% na produção), o que dá R${_r(g['lucro_rebanho_mes'])}/mês no rebanho.")
+            f"{DOSE_G_DIA[c['sistema']]}g por vaca/dia. No protocolo de {c['dias']} dias dá "
+            f"{c['consumo_kg']:.0f}kg, que fecha em {_sacos_label(s['combinacao'])} "
+            f"= R${_r(c['investimento'])}{frete}.{sobra} No retorno, cada vaca rende em torno de "
+            f"R${_r(g['lucro_vaca_periodo'])} de lucro líquido no período (com o aumento de até 3% "
+            f"na produção), o que dá R${_r(g['lucro_rebanho_periodo'])} no rebanho.")
 
 
 # ---- ponto de entrada chamado pelo BaseAgent ----
