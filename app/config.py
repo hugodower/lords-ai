@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # Claude API
     claude_api_key: str
 
+    # Modelos Claude — atualizar aqui quando houver deprecation
+    claude_model_agent: str = "claude-sonnet-4-6"
+    claude_model_intent: str = "claude-haiku-4-5-20251001"
+
     # Chatwoot
     chatwoot_url: str
     chatwoot_api_token: str
