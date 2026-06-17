@@ -29,12 +29,12 @@ async def generate_response(
 ) -> tuple[str, int]:
     """Call Claude API and return (response_text, total_tokens_used).
 
-    Uses claude-sonnet-4-20250514 for best cost/performance ratio.
+    Uses settings.claude_model_agent (Sonnet) for best cost/performance ratio.
     """
     client = get_claude()
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=settings.claude_model_agent,
             max_tokens=max_tokens,
             temperature=temperature,
             system=system_prompt,
@@ -73,12 +73,12 @@ async def generate_extraction(
 ) -> tuple[str, int]:
     """Call Claude Haiku for cheap structured extraction (memory summaries).
 
-    Uses claude-haiku-4-5-20251001 to minimize cost.
+    Uses settings.claude_model_intent (Haiku) to minimize cost.
     """
     client = get_claude()
     try:
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=settings.claude_model_intent,
             max_tokens=max_tokens,
             temperature=0.0,
             messages=[{"role": "user", "content": prompt}],
@@ -118,7 +118,7 @@ async def classify_intent(message: str) -> str:
     client = get_claude()
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=settings.claude_model_intent,
             max_tokens=50,
             temperature=0.0,
             system=(
