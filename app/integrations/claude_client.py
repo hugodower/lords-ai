@@ -17,15 +17,17 @@ async def generate_response(
     messages: list[dict],
     max_tokens: int = 500,
     temperature: float = 0.3,
+    model: str | None = None,
 ) -> tuple[str, int]:
     """Call Claude API and return (response_text, total_tokens_used).
 
-    Uses settings.claude_model_agent (Sonnet) for best cost/performance ratio.
+    `model` defaults to settings.claude_model_agent (Sonnet) when not provided.
+    Callers that resolve a per-org model (see providers/factory.py) pass it in.
     """
     result = _provider.complete(
         system=system_prompt,
         messages=messages,
-        model=settings.claude_model_agent,
+        model=model or settings.claude_model_agent,
         max_tokens=max_tokens,
         temperature=temperature,
     )

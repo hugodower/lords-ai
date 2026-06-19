@@ -15,6 +15,7 @@ from app.guards.autonomy_limit import check_autonomy_limit
 from app.integrations import supabase_client as sb
 from app.integrations.chatwoot import chatwoot_client
 from app.integrations.claude_client import generate_response
+from app.integrations.providers.factory import resolve_model_params
 from app.memory.redis_store import add_message, get_conversation_history, is_paused, save_agreed_schedule
 from app.memory.history import log_interaction
 from app.models.schemas import AgentOutput, ProcessMessageResponse
@@ -344,12 +345,16 @@ class BaseAgent(ABC):
         ]
 
         # ── Layer 4: Claude API ──────────────────────────────────────
+        # Resolve model/params per-org (agent_configs) → default do código.
+        # Com as colunas NULL isto devolve (sonnet-4-6, 0.3, 500) — inalterado.
+        model_params = resolve_model_params(agent_config)
         try:
             raw_response, tokens_used = await generate_response(
                 system_prompt=system_prompt,
                 messages=messages,
-                max_tokens=500,
-                temperature=0.3,
+                model=model_params.model,
+                max_tokens=model_params.max_tokens,
+                temperature=model_params.temperature,
             )
         except Exception as e:
             elapsed = time.time() - start_time

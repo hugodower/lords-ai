@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     claude_model_agent: str = "claude-sonnet-4-6"
     claude_model_intent: str = "claude-haiku-4-5-20251001"
 
+    # Params da geração do agente — defaults globais (override per-org via
+    # agent_configs.model_temperature / .model_max_tokens; ver providers/factory.py).
+    # Fonte única dos valores que antes eram literais em agents/base.py.
+    claude_temperature_agent: float = 0.3
+    claude_max_tokens_agent: int = 500
+
     # Chatwoot
     chatwoot_url: str
     chatwoot_api_token: str
