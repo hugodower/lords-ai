@@ -62,6 +62,18 @@ def resolve_model_params(agent_config: Optional[dict]) -> ResolvedModelParams:
         )
         provider = DEFAULT_PROVIDER
 
+    # Observabilidade (só INFO, não muda comportamento): qual modelo cada org
+    # usou por request. source=override quando algum param veio de agent_configs;
+    # default quando tudo NULL caiu no default do código. Base pro custo da Fase 3.
+    log.info(
+        "[MODEL:RESOLVED] org=%s model=%s temp=%s max_tokens=%s source=%s",
+        cfg.get("organization_id"), model, temperature, max_tokens,
+        "override" if any(
+            cfg.get(k) is not None
+            for k in ("model", "model_temperature", "model_max_tokens")
+        ) else "default",
+    )
+
     return ResolvedModelParams(
         provider=provider,
         model=model,
