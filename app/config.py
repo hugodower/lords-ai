@@ -1,4 +1,7 @@
-from pydantic_settings import BaseSettings
+from typing import Annotated
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode
 import logging
 
 logger = logging.getLogger("config")
@@ -45,6 +48,25 @@ class Settings(BaseSettings):
     # TODO: Remove after migration to DB-only config (per-org in super admin panel)
     sandbox_mode: bool = True
     sandbox_phones: str = "+5518996597391"  # comma-separated allowed phones
+
+    # Telefones de teste efêmeros — interações NÃO persistem estado de longo prazo
+    # (memória do contato, CRM/deal, labels e follow-ups são pulados). A resposta é
+    # gerada/enviada normalmente e o histórico DENTRO da conversa é mantido.
+    # Lê do env EPHEMERAL_TEST_PHONES (separado por vírgula). Default lista vazia =
+    # NO-OP TOTAL: todo mundo persiste exatamente como hoje. O caminho efêmero só
+    # ativa quando o telefone está explicitamente na lista (mesmo padrão do default NULL).
+    # NoDecode evita o JSON-decode automático do pydantic-settings (que quebraria em
+    # "+55...,+55..."); o validator abaixo faz o split por vírgula.
+    ephemeral_test_phones: Annotated[list[str], NoDecode] = []
+
+    @field_validator("ephemeral_test_phones", mode="before")
+    @classmethod
+    def _parse_ephemeral_test_phones(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [p.strip() for p in v.split(",") if p.strip()]
+        return v
 
     # Config
     log_level: str = "INFO"

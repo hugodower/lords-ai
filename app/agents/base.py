@@ -246,6 +246,27 @@ class BaseAgent(ABC):
         except Exception as name_err:
             log.warning("[NAME_CAPTURE] Error: %s", name_err)
 
+        # ── Ephemeral test phones ──────────────────────────────────
+        # Telefones de teste: pulam TODA persistência de estado de longo prazo
+        # (memória do contato, CRM/deal, labels, follow-ups). A geração da resposta,
+        # o envio pro Chatwoot e o histórico DENTRO da conversa (Redis, por
+        # conversation_id) são mantidos — multi-turn funciona normalmente no teste.
+        # INVARIANTE: lista vazia (default) → is_ephemeral sempre False → NO-OP total.
+        is_ephemeral = False
+        if contact_phone and settings.ephemeral_test_phones:
+            normalized_phone = normalize_phone(contact_phone)
+            ephemeral_allowed = {
+                normalize_phone(p.strip())
+                for p in settings.ephemeral_test_phones
+                if p and p.strip()
+            }
+            is_ephemeral = normalized_phone in ephemeral_allowed
+        if is_ephemeral:
+            log.info(
+                "[EPHEMERAL] conv=%s phone=%s → pulando persistência (telefone de teste)",
+                conversation_id, contact_phone,
+            )
+
         # Log incoming message
         await log_interaction(
             org_id=org_id,
@@ -271,28 +292,34 @@ class BaseAgent(ABC):
             log.warning("[SENTIMENT] Error analyzing sentiment: %s", sent_err)
 
         # ── Load long-term memory ─────────────────────────────────
+        # Efêmero: NÃO carrega memória (clean slate + não puxa poluição antiga).
+        # build_context já trata contact_memory=None com segurança.
         contact_memory = None
-        try:
-            contact_memory = await load_contact_memory(org_id, contact_phone, chatwoot_contact_id)
-        except Exception as mem_err:
-            log.warning("[MEMORY] Error loading contact memory: %s", mem_err)
+        if not is_ephemeral:
+            try:
+                contact_memory = await load_contact_memory(org_id, contact_phone, chatwoot_contact_id)
+            except Exception as mem_err:
+                log.warning("[MEMORY] Error loading contact memory: %s", mem_err)
 
         # ── Load campaign context from contact ─────────────────────
+        # Efêmero: NÃO lê contato/campanha (clean slate consistente com o skip de
+        # memória; build_context já trata campaign_context=None com segurança).
         campaign_context = None
-        try:
-            _contact = None
-            if chatwoot_contact_id:
-                _contact = await sb.find_contact_by_chatwoot_id(org_id, chatwoot_contact_id)
-            if not _contact and contact_phone:
-                _contact = await sb.find_contact_by_phone(org_id, contact_phone)
-            if _contact and _contact.get("campaign_context"):
-                campaign_context = _contact["campaign_context"]
-                log.info(
-                    "[CAMPAIGN] Loaded campaign context for contact %s: type=%s",
-                    _contact["id"][:8], campaign_context.get("type", "?"),
-                )
-        except Exception as camp_err:
-            log.warning("[CAMPAIGN] Error loading campaign context: %s", camp_err)
+        if not is_ephemeral:
+            try:
+                _contact = None
+                if chatwoot_contact_id:
+                    _contact = await sb.find_contact_by_chatwoot_id(org_id, chatwoot_contact_id)
+                if not _contact and contact_phone:
+                    _contact = await sb.find_contact_by_phone(org_id, contact_phone)
+                if _contact and _contact.get("campaign_context"):
+                    campaign_context = _contact["campaign_context"]
+                    log.info(
+                        "[CAMPAIGN] Loaded campaign context for contact %s: type=%s",
+                        _contact["id"][:8], campaign_context.get("type", "?"),
+                    )
+            except Exception as camp_err:
+                log.warning("[CAMPAIGN] Error loading campaign context: %s", camp_err)
 
         # SENTIMENT-based auto-handoff REMOVED
         # Reason: was triggering false positives on normal price objections
@@ -675,124 +702,128 @@ class BaseAgent(ABC):
                 log.warning("Chatwoot send failed (conv=%s): %s", conversation_id, send_err)
             await add_message(conversation_id, "assistant", output.text)
 
-        # Update CRM if needed
-        if action == "update_crm" or action == "schedule" or output.crm_updates:
-            try:
-                await sb.update_deal_ai_fields(org_id, contact_phone, agent_type)
-            except Exception as crm_err:
-                log.warning("CRM update failed: %s", crm_err)
-
-        # ── Pipeline management & conversation resolution ──────────
-        try:
-            log.info(
-                "[PIPELINE:TRIGGER] conv=%s action='%s' temp='%s' crm_stage='%s' crm_tags=%s",
-                conversation_id, action, output.lead_temperature,
-                output.crm_updates.stage if output.crm_updates else None,
-                output.crm_updates.tags if output.crm_updates else [],
-            )
-            if action == "schedule":
-                log.info("[PIPELINE:TRIGGER] → calling update_stage('03-reuniao-agendada') for conv %s", conversation_id)
-                await update_stage(org_id, contact_phone, conversation_id, "03-reuniao-agendada", contact_name, chatwoot_contact_id, channel=channel)
-                schedule_resolve(org_id, conversation_id, 30, "03-reuniao-agendada")
-
-                # ─── NOVO: Criar atividade no CRM + handoff pro vendedor humano ───
+        # ── Persistência de CRM / pipeline ─────────────────────────
+        # Efêmero: pula TODO o bloco (deal, stage, labels, atividades, resolve).
+        # Nada aqui retorna valor usado adiante, então pular é seguro.
+        if not is_ephemeral:
+            # Update CRM if needed
+            if action == "update_crm" or action == "schedule" or output.crm_updates:
                 try:
-                    from app.services.pipeline_manager import ensure_contact_exists, ensure_deal_exists
+                    await sb.update_deal_ai_fields(org_id, contact_phone, agent_type)
+                except Exception as crm_err:
+                    log.warning("CRM update failed: %s", crm_err)
 
-                    # 1. Lookup contact (priorizar chatwoot_contact_id)
-                    contact = await ensure_contact_exists(
-                        org_id, contact_phone, contact_name, chatwoot_contact_id, channel=channel
-                    )
+            # ── Pipeline management & conversation resolution ──────────
+            try:
+                log.info(
+                    "[PIPELINE:TRIGGER] conv=%s action='%s' temp='%s' crm_stage='%s' crm_tags=%s",
+                    conversation_id, action, output.lead_temperature,
+                    output.crm_updates.stage if output.crm_updates else None,
+                    output.crm_updates.tags if output.crm_updates else [],
+                )
+                if action == "schedule":
+                    log.info("[PIPELINE:TRIGGER] → calling update_stage('03-reuniao-agendada') for conv %s", conversation_id)
+                    await update_stage(org_id, contact_phone, conversation_id, "03-reuniao-agendada", contact_name, chatwoot_contact_id, channel=channel)
+                    schedule_resolve(org_id, conversation_id, 30, "03-reuniao-agendada")
 
-                    if not contact:
+                    # ─── NOVO: Criar atividade no CRM + handoff pro vendedor humano ───
+                    try:
+                        from app.services.pipeline_manager import ensure_contact_exists, ensure_deal_exists
+
+                        # 1. Lookup contact (priorizar chatwoot_contact_id)
+                        contact = await ensure_contact_exists(
+                            org_id, contact_phone, contact_name, chatwoot_contact_id, channel=channel
+                        )
+
+                        if not contact:
+                            log.warning(
+                                "[SCHEDULE:CHAIN] contact lookup failed for org=%s phone=%s — skipping activity+handoff",
+                                org_id, contact_phone
+                            )
+                        else:
+                            # 2. Garantir deal existe (ensure_deal_exists retorna tuple)
+                            deal, _is_new = await ensure_deal_exists(org_id, contact["id"], contact_name)
+
+                            # 3. Criar atividade no CRM (try/except gracioso — não bloqueia handoff)
+                            try:
+                                from datetime import datetime
+                                sched_start_iso = sched_result.get("start") if sched_result else None
+                                if sched_start_iso and deal:
+                                    sched_start_dt = datetime.fromisoformat(sched_start_iso)
+                                    activity = await sb.create_activity(
+                                        org_id=org_id,
+                                        type="call",
+                                        due_at=sched_start_dt,
+                                        title=f"Ligação agendada - {contact_name}",
+                                        description=f"Agendado via Ana SDR. Event ID: {sched_result.get('event_id', '')}",
+                                        deal_id=deal["id"],
+                                        contact_id=contact["id"],
+                                        assigned_to=agent_config.get("handoff_user_id"),
+                                    )
+                                    if activity:
+                                        log.info("[SCHEDULE:CHAIN] ✓ activity created — id=%s", activity.get("id"))
+                            except Exception as activity_err:
+                                log.error("[SCHEDULE:CHAIN] FAILED to create activity — %s", activity_err, exc_info=True)
+
+                            # POST-SCHEDULE auto-handoff REMOVED
+                            # Reason: lead may have follow-up questions before the meeting.
+                            # Ana continues responding. Luan assumes conversation manually
+                            # when he replies in Chatwoot, OR when the meeting time arrives.
+                            log.info(
+                                "[SCHEDULE_SUCCESS] conv=%s scheduled, Ana continues responding (no auto-handoff)",
+                                conversation_id
+                            )
+                    except Exception as chain_err:
+                        log.error("[SCHEDULE:CHAIN] FAILED chain — %s", chain_err, exc_info=True)
+                elif action == "handoff":
+                    log.info("[PIPELINE:TRIGGER] → calling update_stage('05-em-negociacao') for conv %s", conversation_id)
+                    await update_stage(org_id, contact_phone, conversation_id, "05-em-negociacao", contact_name, chatwoot_contact_id, channel=channel)
+                elif output.lead_temperature in ("hot", "warm"):
+                    if is_generic_greeting(message):
                         log.warning(
-                            "[SCHEDULE:CHAIN] contact lookup failed for org=%s phone=%s — skipping activity+handoff",
-                            org_id, contact_phone
-                        )
-                    else:
-                        # 2. Garantir deal existe (ensure_deal_exists retorna tuple)
-                        deal, _is_new = await ensure_deal_exists(org_id, contact["id"], contact_name)
-
-                        # 3. Criar atividade no CRM (try/except gracioso — não bloqueia handoff)
-                        try:
-                            from datetime import datetime
-                            sched_start_iso = sched_result.get("start") if sched_result else None
-                            if sched_start_iso and deal:
-                                sched_start_dt = datetime.fromisoformat(sched_start_iso)
-                                activity = await sb.create_activity(
-                                    org_id=org_id,
-                                    type="call",
-                                    due_at=sched_start_dt,
-                                    title=f"Ligação agendada - {contact_name}",
-                                    description=f"Agendado via Ana SDR. Event ID: {sched_result.get('event_id', '')}",
-                                    deal_id=deal["id"],
-                                    contact_id=contact["id"],
-                                    assigned_to=agent_config.get("handoff_user_id"),
-                                )
-                                if activity:
-                                    log.info("[SCHEDULE:CHAIN] ✓ activity created — id=%s", activity.get("id"))
-                        except Exception as activity_err:
-                            log.error("[SCHEDULE:CHAIN] FAILED to create activity — %s", activity_err, exc_info=True)
-
-                        # POST-SCHEDULE auto-handoff REMOVED
-                        # Reason: lead may have follow-up questions before the meeting.
-                        # Ana continues responding. Luan assumes conversation manually
-                        # when he replies in Chatwoot, OR when the meeting time arrives.
-                        log.info(
-                            "[SCHEDULE_SUCCESS] conv=%s scheduled, Ana continues responding (no auto-handoff)",
-                            conversation_id
-                        )
-                except Exception as chain_err:
-                    log.error("[SCHEDULE:CHAIN] FAILED chain — %s", chain_err, exc_info=True)
-            elif action == "handoff":
-                log.info("[PIPELINE:TRIGGER] → calling update_stage('05-em-negociacao') for conv %s", conversation_id)
-                await update_stage(org_id, contact_phone, conversation_id, "05-em-negociacao", contact_name, chatwoot_contact_id, channel=channel)
-            elif output.lead_temperature in ("hot", "warm"):
-                if is_generic_greeting(message):
-                    log.warning(
-                        "[QUALIFICATION:GUARD_BLOCKED] conv=%s temp=%s blocked: generic greeting only (message=%r). Treating as cold + 01-novo-contato.",
-                        conversation_id, output.lead_temperature, message[:50]
-                    )
-                    await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id, channel=channel)
-                else:
-                    # Lookup dinâmico do label conforme org (ai_qualified = stage onde Ana detectou dor)
-                    ai_qualified_stage = await sb.get_stage_by_role(org_id, "ai_qualified")
-                    if ai_qualified_stage and ai_qualified_stage.get("chatwoot_label"):
-                        target_label = ai_qualified_stage["chatwoot_label"]
-                        log.info(
-                            "[PIPELINE:TRIGGER] → calling update_stage('%s') for conv %s (temp=%s)",
-                            target_label, conversation_id, output.lead_temperature
-                        )
-                        await update_stage(org_id, contact_phone, conversation_id, target_label, contact_name, chatwoot_contact_id, channel=channel)
-                    else:
-                        log.warning(
-                            "[PIPELINE:TRIGGER] No 'ai_qualified' role mapped for org=%s — skipping auto-advance, ensuring deal exists only",
-                            org_id
+                            "[QUALIFICATION:GUARD_BLOCKED] conv=%s temp=%s blocked: generic greeting only (message=%r). Treating as cold + 01-novo-contato.",
+                            conversation_id, output.lead_temperature, message[:50]
                         )
                         await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id, channel=channel)
-            else:
-                log.info("[PIPELINE:TRIGGER] → calling ensure_contact_and_deal() for conv %s (temp=%s)", conversation_id, output.lead_temperature)
-                await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id, channel=channel)
-
-            # CRM-driven stage move (if Claude specified a stage explicitly)
-            if output.crm_updates and output.crm_updates.stage:
-                # Resolve label do ai_qualified pra essa org (pode variar entre orgs)
-                ai_qualified_stage = await sb.get_stage_by_role(org_id, "ai_qualified")
-                ai_qualified_label = ai_qualified_stage["chatwoot_label"] if (ai_qualified_stage and ai_qualified_stage.get("chatwoot_label")) else None
-
-                if output.crm_updates.stage == ai_qualified_label and is_generic_greeting(message):
-                    log.warning(
-                        "[QUALIFICATION:GUARD_BLOCKED] conv=%s crm_updates.stage='%s' blocked: generic greeting only (message=%r). Stage override ignored.",
-                        conversation_id, ai_qualified_label, message[:50]
-                    )
+                    else:
+                        # Lookup dinâmico do label conforme org (ai_qualified = stage onde Ana detectou dor)
+                        ai_qualified_stage = await sb.get_stage_by_role(org_id, "ai_qualified")
+                        if ai_qualified_stage and ai_qualified_stage.get("chatwoot_label"):
+                            target_label = ai_qualified_stage["chatwoot_label"]
+                            log.info(
+                                "[PIPELINE:TRIGGER] → calling update_stage('%s') for conv %s (temp=%s)",
+                                target_label, conversation_id, output.lead_temperature
+                            )
+                            await update_stage(org_id, contact_phone, conversation_id, target_label, contact_name, chatwoot_contact_id, channel=channel)
+                        else:
+                            log.warning(
+                                "[PIPELINE:TRIGGER] No 'ai_qualified' role mapped for org=%s — skipping auto-advance, ensuring deal exists only",
+                                org_id
+                            )
+                            await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id, channel=channel)
                 else:
-                    log.info("[PIPELINE:TRIGGER] → CRM override: update_stage('%s') for conv %s", output.crm_updates.stage, conversation_id)
-                    await update_stage(org_id, contact_phone, conversation_id, output.crm_updates.stage, contact_name, chatwoot_contact_id, channel=channel)
-            if output.crm_updates and output.crm_updates.tags:
-                for tag in output.crm_updates.tags:
-                    await add_label_to_chatwoot(org_id, conversation_id, tag)
-        except Exception as pipe_err:
-            log.warning("[PIPELINE] Pipeline/resolve error: %s", pipe_err, exc_info=True)
+                    log.info("[PIPELINE:TRIGGER] → calling ensure_contact_and_deal() for conv %s (temp=%s)", conversation_id, output.lead_temperature)
+                    await ensure_contact_and_deal(org_id, contact_phone, contact_name, chatwoot_contact_id, conversation_id, channel=channel)
+
+                # CRM-driven stage move (if Claude specified a stage explicitly)
+                if output.crm_updates and output.crm_updates.stage:
+                    # Resolve label do ai_qualified pra essa org (pode variar entre orgs)
+                    ai_qualified_stage = await sb.get_stage_by_role(org_id, "ai_qualified")
+                    ai_qualified_label = ai_qualified_stage["chatwoot_label"] if (ai_qualified_stage and ai_qualified_stage.get("chatwoot_label")) else None
+
+                    if output.crm_updates.stage == ai_qualified_label and is_generic_greeting(message):
+                        log.warning(
+                            "[QUALIFICATION:GUARD_BLOCKED] conv=%s crm_updates.stage='%s' blocked: generic greeting only (message=%r). Stage override ignored.",
+                            conversation_id, ai_qualified_label, message[:50]
+                        )
+                    else:
+                        log.info("[PIPELINE:TRIGGER] → CRM override: update_stage('%s') for conv %s", output.crm_updates.stage, conversation_id)
+                        await update_stage(org_id, contact_phone, conversation_id, output.crm_updates.stage, contact_name, chatwoot_contact_id, channel=channel)
+                if output.crm_updates and output.crm_updates.tags:
+                    for tag in output.crm_updates.tags:
+                        await add_label_to_chatwoot(org_id, conversation_id, tag)
+            except Exception as pipe_err:
+                log.warning("[PIPELINE] Pipeline/resolve error: %s", pipe_err, exc_info=True)
 
         # ── Set conversation priority based on sentiment ──────────
         try:
@@ -823,22 +854,25 @@ class BaseAgent(ABC):
         )
 
         # Update long-term memory (background task, non-blocking)
-        try:
-            await maybe_update_memory(
-                org_id=org_id,
-                contact_phone=contact_phone,
-                contact_name=contact_name,
-                conversation_id=conversation_id,
-                action=action,
-                lead_temperature=output.lead_temperature,
-                last_sentiment=sentiment_data.get("sentiment", "neutral"),
-                chatwoot_contact_id=chatwoot_contact_id,
-            )
-        except Exception as mem_err:
-            log.warning("[MEMORY] Error triggering memory update: %s", mem_err)
+        # Efêmero: NÃO grava memória (interação de teste não deve poluir o contato).
+        if not is_ephemeral:
+            try:
+                await maybe_update_memory(
+                    org_id=org_id,
+                    contact_phone=contact_phone,
+                    contact_name=contact_name,
+                    conversation_id=conversation_id,
+                    action=action,
+                    lead_temperature=output.lead_temperature,
+                    last_sentiment=sentiment_data.get("sentiment", "neutral"),
+                    chatwoot_contact_id=chatwoot_contact_id,
+                )
+            except Exception as mem_err:
+                log.warning("[MEMORY] Error triggering memory update: %s", mem_err)
 
         # Schedule follow-ups after Aurora replies (if lead doesn't respond, these will fire)
-        if action not in ("handoff", "blocked", "ignored"):
+        # Efêmero: NÃO agenda follow-ups (não queremos disparos futuros para um teste).
+        if action not in ("handoff", "blocked", "ignored") and not is_ephemeral:
             try:
                 conv_id_int = int(conversation_id)
                 await schedule_followups_after_reply(
